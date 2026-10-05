@@ -1,0 +1,9 @@
+node_modules
+dist
+.env
+.env.local
+*.local
+.vite
+*.log
+Dockerfile*
+.dockerignore

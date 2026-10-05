@@ -1,0 +1,24 @@
+# Development image for the admin UI: Vite dev server with hot reload.
+#
+# Mount the source over /app to get live reload, and point the dev proxy at a
+# reachable license server (see vite.config.js — it reads LICENSE_SERVER_URL):
+#
+#   docker build -f Dockerfile.dev -t ng-admin-ui-dev .
+#   docker run --rm -p 5173:5173 \
+#     -v "$PWD":/app -v /app/node_modules \
+#     -e LICENSE_SERVER_URL=http://host.docker.internal:8001 \
+#     ng-admin-ui-dev
+FROM docker.arvancloud.ir/node:22-alpine
+WORKDIR /app
+
+# Install dependencies first so a source-only change does not reinstall them.
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+
+EXPOSE 5173
+
+# --host is required for the server to be reachable from outside the container;
+# vite.config.js already sets host/port, and this makes it explicit.
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]

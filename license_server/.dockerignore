@@ -1,0 +1,16 @@
+# Keep secrets and local cruft out of the image. Without this, `COPY . .` bakes
+# license_server/.env — real SECRET_KEY and admin password — into every layer of
+# the published image, where `docker history` can read it back out.
+.env
+.env.*
+!.env.example
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Not needed at runtime.
+*.md
+alembic/README

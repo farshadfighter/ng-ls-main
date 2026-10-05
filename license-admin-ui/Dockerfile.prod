@@ -1,0 +1,28 @@
+# Production image for the License Server admin UI.
+# Two stages: build the Vite bundle, then serve it from nginx.
+#
+# The bundle is built WITHOUT VITE_LICENSE_API_URL on purpose, so the client
+# uses relative paths (/api/..., /health) and nginx proxies them to the license
+# server over the internal docker network — same origin, no CORS, and no server
+# address baked into the JavaScript.
+FROM node:22-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+# `npm ci` installs exactly what package-lock.json pins, so an image built today
+# matches one built six months ago. `npm install` may silently drift.
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM nginx:alpine
+# curl, for the compose healthcheck only. The busybox wget shipped in this image
+# cannot be given a CA file (--ca-certificate does not exist), so probing the
+# HTTPS listener with it would mean --no-check-certificate. curl --cacert lets
+# the healthcheck verify the certificate it is actually serving.
+RUN apk add --no-cache curl
+COPY --from=builder /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+# The TLS key/cert are deliberately NOT copied in: they are mounted at runtime
+# from ./certs (see docker-compose.yml) so no private key ever lands in an image
+# layer. nginx.conf expects them at /etc/nginx/certs/.
+EXPOSE 80 443

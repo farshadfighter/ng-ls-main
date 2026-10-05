@@ -1,0 +1,18 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+sqlalchemy==2.0.35
+psycopg2-binary==2.9.10
+pydantic[email]==2.9.0
+email-validator
+pydantic-settings==2.5.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.9
+cryptography==43.0.0
+redis==5.0.1
+alembic==1.13.1
+requests==2.31.0
+# TestClient (starlette) needs httpx. Used by tests/test_portal_auth.py; not
+# imported by the app itself.
+httpx==0.27.2
+python-dotenv==1.0.0

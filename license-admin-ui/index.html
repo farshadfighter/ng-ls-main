@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>License Server — Admin Console</title>
+    <!-- Cloudflare Turnstile for the login form. render=explicit: Login.jsx
+         mounts the widget itself, since the form is rendered by React. -->
+    <script
+      id="cf-turnstile-script"
+      src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
+      async
+      defer
+    ></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

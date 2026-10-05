@@ -1,0 +1,33 @@
+# Secrets — never commit. Use the .env.example files as templates.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Stray backups of the above (e.g. .env.bak.<timestamp>) — already caught by
+# .env.* above in most cases, but these patterns catch it regardless of where
+# ".bak" lands in the name.
+*.bak
+.env.bak*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Node / frontend build output
+node_modules/
+dist/
+dist-ssr/
+.vite/
+
+# TLS material for the HTTPS listener — generated per host by
+# scripts/gen-self-signed-cert.sh. The private key must never be committed, and
+# the cert is host-specific (its SAN pins one IP), so neither belongs in git.
+certs/
+
+# Misc
+*.log
+.DS_Store
