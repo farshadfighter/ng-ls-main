@@ -215,6 +215,12 @@ export default function LicenseList() {
             );
             setSelected((s) => (s ? { ...s, is_active: false } : s));
           }}
+          onUpdated={(updated) => {
+            setLicenses((prev) =>
+              prev.map((l) => (l.license_key === updated.license_key ? updated : l))
+            );
+            setSelected(updated);
+          }}
           onDeleted={(key) => {
             setLicenses((prev) => prev.filter((l) => l.license_key !== key));
             setSelected(null);

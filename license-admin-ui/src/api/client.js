@@ -114,6 +114,11 @@ export const revokeLicense = (licenseKey) =>
 export const deleteLicense = (licenseKey) =>
   api.del(`/api/admin/licenses/${encodeURIComponent(licenseKey)}/permanent`, { auth: true });
 
+// Release a license from the machine it is bound to (hardware move or reinstall);
+// the customer's next activation binds it again.
+export const resetBinding = (licenseKey) =>
+  api.post(`/api/admin/licenses/${encodeURIComponent(licenseKey)}/reset-binding`, undefined, { auth: true });
+
 // Public client endpoints (used by the Test panel) — no auth, no signature.
 export const testActivate = (license_key, vm_fingerprint) =>
   api.post("/api/licenses/activate", { license_key, vm_fingerprint });

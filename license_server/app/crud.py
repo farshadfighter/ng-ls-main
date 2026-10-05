@@ -148,7 +148,16 @@ def get_license_by_order_id(db: Session, order_id: int) -> models.License:
 def get_license_by_token(db: Session, org_token: str) -> models.License:
     return db.query(models.License).filter(models.License.organization_token == org_token).first()
 
-def activate_license(db: Session, license_key: str, vm_fingerprint: str) -> tuple[bool, str, models.License]:
+def activate_license(db: Session, license_key: str, vm_fingerprint: str,
+                     client_computed: bool = False) -> tuple[bool, str, models.License]:
+    """Bind a license to a machine (one machine per license) and return it.
+
+    `client_computed` is True for NGCorion releases with signed licensing,
+    which compute the fingerprint on the licensed machine (they send a nonce).
+    A license whose binding was not made that way - bound to the license
+    server's own fingerprint by an older release - may move once to a
+    client-computed fingerprint.
+    """
     license = get_license_by_key(db, license_key)
     
     if not license:
@@ -160,12 +169,26 @@ def activate_license(db: Session, license_key: str, vm_fingerprint: str) -> tupl
     if license.expires_at < datetime.now(timezone.utc):
         return False, "license is expierd", None
     
-    # چک VM fingerprint - فقط یک ماشین مجاز
+    # One machine per license.
     if license.vm_fingerprint and license.vm_fingerprint != vm_fingerprint:
-        return False, "this license already activate in another VM", None
+        if client_computed and license.fingerprint_source != "client":
+            # Bound by an NGCorion release that asked THIS server for the
+            # fingerprint (GET /api/fingerprint), so every installation got the
+            # license server's own fingerprint and the binding meant nothing.
+            # Such a license may move once to a real, client-computed
+            # fingerprint; after that the normal one-machine rule applies.
+            logger.warning(
+                "[License] %s had a legacy binding (license server's own "
+                "fingerprint); rebinding it to the client's machine",
+                license.license_key,
+            )
+            license.vm_fingerprint = None
+        else:
+            return False, "this license already activate in another VM", None
     
     if not license.vm_fingerprint:
         license.vm_fingerprint = vm_fingerprint
+        license.fingerprint_source = "client" if client_computed else None
         license.activated_at = datetime.now(timezone.utc)
         license.last_heartbeat_at = datetime.now(timezone.utc)
         db.commit()
@@ -181,6 +204,20 @@ def activate_license(db: Session, license_key: str, vm_fingerprint: str) -> tupl
         notifier.notify(LicenseEvent.UPDATED, license)
 
     return True, "license activate successfully", license
+
+def reset_binding(db: Session, license_key: str) -> models.License:
+    """Release a license from its machine (admin action, e.g. after a hardware move or a
+    reinstall); the next activation binds it again. None when the key is unknown.
+    """
+    license = get_license_by_key(db, license_key)
+    if license is None:
+        return None
+    license.vm_fingerprint = None
+    license.fingerprint_source = None
+    db.commit()
+    db.refresh(license)
+    notifier.notify(LicenseEvent.UPDATED, license)
+    return license
 
 def validate_license(db: Session, license_key: str, org_token: str, vm_fingerprint: str) -> tuple[bool, str, models.License]:
     license = get_license_by_key(db, license_key)

@@ -28,6 +28,15 @@ class Settings(BaseSettings):
     # API
     API_V1_PREFIX: str = "/api"
     
+    # Ed25519 key that signs every licensing answer (base64 of the 32-byte seed;
+    # make one with scripts/generate_signing_key.py). NGCorion only trusts
+    # answers signed by a key whose public half is built into its code, so a
+    # fake license server cannot unlock it. No default: unset means the license
+    # endpoints answer 503 rather than send answers NGCorion would refuse.
+    # Keep it out of git and off every other machine - whoever has it can mint
+    # licenses.
+    LICENSE_SIGNING_PRIVATE_KEY: Optional[str] = None
+
     # Admin
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = "changeme"

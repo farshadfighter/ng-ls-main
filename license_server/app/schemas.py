@@ -30,11 +30,17 @@ class LicenseCreate(BaseModel):
 class LicenseActivate(BaseModel):
     license_key: str
     vm_fingerprint: str
+    # Random value the client picks per request; echoed inside the signed
+    # token so a recorded answer cannot be replayed to the client later.
+    nonce: Optional[str] = Field(default=None, max_length=128)
 
 class LicenseValidate(BaseModel):
     license_key: str
     organization_token: str
     vm_fingerprint: str
+    # Random value the client picks per request; echoed inside the signed
+    # token so a recorded answer cannot be replayed to the client later.
+    nonce: Optional[str] = Field(default=None, max_length=128)
 
 class OperationConsume(BaseModel):
     license_key: str
@@ -42,6 +48,9 @@ class OperationConsume(BaseModel):
     vm_fingerprint: str
     operation_type: str  # "audit" or "harden" — Asset Management is not license-gated
     count: int = 1
+    # Random value the client picks per request; echoed inside the signed
+    # token so a recorded answer cannot be replayed to the client later.
+    nonce: Optional[str] = Field(default=None, max_length=128)
 
 class LicenseResponse(BaseModel):
     id: int
@@ -79,11 +88,20 @@ class ValidationResponse(BaseModel):
     limits: Optional[dict] = None
     usage: Optional[dict] = None
     organization_token: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    # The same answer signed with LICENSE_SIGNING_PRIVATE_KEY (see
+    # app/utils/license_token.py). NGCorion acts only on this token; the plain
+    # fields above stay for older clients and for humans reading the response.
+    signed_token: Optional[str] = None
 
 class HeartbeatResponse(BaseModel):
     success: bool
     message: str
     should_downgrade: bool = False
+    # The same answer signed with LICENSE_SIGNING_PRIVATE_KEY (see
+    # app/utils/license_token.py). NGCorion acts only on this token; the plain
+    # fields above stay for older clients and for humans reading the response.
+    signed_token: Optional[str] = None
 
 class FingerprintResponse(BaseModel):
     """Response model for VM fingerprint endpoint"""

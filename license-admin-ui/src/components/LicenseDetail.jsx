@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { revokeLicense, deleteLicense } from "../api/client.js";
+import { revokeLicense, deleteLicense, resetBinding } from "../api/client.js";
 import { planLabel } from "../lib/plans.js";
 import { fmtDate, relativeTime, isExpired } from "../lib/format.js";
 import UsageBars from "./UsageBars.jsx";
@@ -10,8 +10,9 @@ import { CopyRow } from "./CredentialCard.jsx";
 // countdown, timestamps and the bound VM fingerprint. Revoke lives here too.
 // Reactivation is intentionally disabled — the admin API exposes no such
 // endpoint (DELETE only sets is_active=False).
-export default function LicenseDetail({ license, onClose, onRevoked, onDeleted }) {
+export default function LicenseDetail({ license, onClose, onRevoked, onDeleted, onUpdated }) {
   const [revoking, setRevoking] = useState(false);
+  const [releasing, setReleasing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
   const expired = isExpired(license);
@@ -27,6 +28,29 @@ export default function LicenseDetail({ license, onClose, onRevoked, onDeleted }
       setError(err.message || "Failed to revoke");
     } finally {
       setRevoking(false);
+    }
+  }
+
+  // The license moves to another machine on the customer's next activation;
+  // the machine it was bound to is refused from its next validation on.
+  async function handleRelease() {
+    if (
+      !window.confirm(
+        `Release ${license.license_key} from its machine?\n\n` +
+          `The current server stops being licensed at its next check, and the license ` +
+          `can then be activated on another (or a reinstalled) server.`
+      )
+    )
+      return;
+    setReleasing(true);
+    setError("");
+    try {
+      const updated = await resetBinding(license.license_key);
+      onUpdated?.(updated);
+    } catch (err) {
+      setError(err.message || "Failed to release the machine binding");
+    } finally {
+      setReleasing(false);
     }
   }
 
@@ -114,6 +138,13 @@ export default function LicenseDetail({ license, onClose, onRevoked, onDeleted }
             title="The license server API has no reactivate endpoint (DELETE only deactivates). Reactivation is not supported."
           >
             Reactivate
+          </button>
+          <button
+            onClick={handleRelease}
+            disabled={!license.vm_fingerprint || releasing || revoking || deleting}
+            title={license.vm_fingerprint ? "Release the license from its machine" : "Not bound to a machine"}
+          >
+            {releasing ? "Releasing…" : "Release machine"}
           </button>
           <button
             className="danger"

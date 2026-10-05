@@ -8,6 +8,41 @@
 > `from client import ...` snippets below are kept as illustrations of the call
 > sequence; import from `app.core.license_client` instead.
 
+## Signed licensing answers (read this first)
+
+Every answer of `/api/licenses/activate`, `/validate`, `/heartbeat` and
+`/consume` carries `signed_token`: the answer signed with the Ed25519 key in
+`LICENSE_SIGNING_PRIVATE_KEY` (`app/utils/license_token.py`). NGCorion has the
+public half built in (`app/core/license_keys.py`) and acts only on a token it
+can verify, whose nonce matches its request and whose fingerprint is its own
+machine. A server without the private key cannot unlock NGCorion, whatever it
+answers.
+
+* **Key setup:** `python scripts/generate_signing_key.py` prints the private key
+  (for this server's `.env` only) and the public key with its id (for
+  NGCorion). `GET /api/signing-key` shows which public key the running server
+  uses.
+* **No key, no answers:** without `LICENSE_SIGNING_PRIVATE_KEY` the licensing
+  endpoints answer 503.
+* **Machine binding:** the client computes the fingerprint of its own machine
+  and sends it; a license is bound to the first fingerprint it is activated
+  with. `POST /api/admin/licenses/{key}/reset-binding` (the "Release machine"
+  button in the admin UI) frees it for a hardware move or reinstall.
+* **Legacy bindings:** NGCorion releases before signing asked
+  `GET /api/fingerprint`, which returns this server's own fingerprint (a
+  different one each time its container is recreated), so their bindings
+  identify no customer machine. `licenses.fingerprint_source` (migration 005)
+  tells them apart: NULL for those, `client` for bindings made by a release
+  that computes the fingerprint itself (it sends a nonce). A NULL binding may
+  move once to a client-computed fingerprint on its next activation. The
+  endpoint stays only for the old releases.
+* **Key rotation:** add the new public key to NGCorion next to the old one,
+  ship that release, switch this server to the new private key, and drop the
+  old public key in a later release.
+* **Tests:** `tests/test_signed_licensing.py` (needs PostgreSQL). Like the
+  portal tests, run each test module on its own: they pin settings before the
+  app is imported.
+
 ## For Backend Developers: Generating Licenses
 
 ### Method 1: Using the Admin API (Recommended)

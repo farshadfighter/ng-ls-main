@@ -1,6 +1,7 @@
+import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from .database import engine, Base
 from .routers import licenses, admin, admin_portal, internal_portal
@@ -10,6 +11,7 @@ from .core.config import settings
 from .core.portal_events import notifier as portal_notifier
 from .core.portal_sync import syncer as portal_syncer
 from .utils.fingerprint import get_vm_fingerprint
+from .utils.license_token import SigningKeyMissing, get_signer
 from .schemas import FingerprintResponse
 
 Base.metadata.create_all(bind=engine)
@@ -39,6 +41,15 @@ async def lifespan(app: FastAPI):
     A sync interrupted mid-run simply resumes from scratch on the next tick —
     it is an idempotent upsert, so a partial run costs nothing.
     """
+    # Without a signing key every licensing endpoint answers 503 (NGCorion
+    # refuses unsigned answers). Say so at boot, where it will be seen.
+    try:
+        signer = get_signer()
+        logging.getLogger(__name__).info(
+            "[License] signing answers with key id %s", signer.kid)
+    except SigningKeyMissing as exc:
+        logging.getLogger(__name__).error("[License] %s", exc)
+
     portal_notifier.start()
     portal_syncer.start()
     try:
@@ -88,9 +99,31 @@ def root():
 def health_check():
     return {"status": "healthy"}
 
+@app.get("/api/signing-key")
+def get_signing_key():
+    """The public half of the key that signs licensing answers, and its id - what NGCorion must
+    have in app/core/license_keys.py. Public information; lets an admin check that the server and
+    the product agree. 503 when no signing key is configured.
+    """
+    try:
+        signer = get_signer()
+    except SigningKeyMissing as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return {"kid": signer.kid, "public_key": signer.public_key_b64, "algorithm": "Ed25519"}
+
+
 @app.get("/api/fingerprint", response_model=FingerprintResponse)
 def get_fingerprint():
-    """Get the hardware fingerprint of the machine THIS PROCESS is running on.
+    """DEPRECATED - kept only for NGCorion releases before signed licensing.
+
+    It returns the license SERVER's own fingerprint, which those releases used
+    as "the machine" - so every installation got the same fingerprint and the
+    one-machine rule did nothing. Current NGCorion computes the fingerprint on
+    the machine it runs on, and crud.activate_license lets a license bound to
+    this value move once to a real one. Remove this endpoint once no
+    installation runs a pre-signing release.
+
+    Get the hardware fingerprint of the machine THIS PROCESS is running on.
 
     Not called by anything in this repo (the admin UI's Test panel generates
     a random fingerprint client-side instead). Per

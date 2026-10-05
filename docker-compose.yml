@@ -79,6 +79,9 @@ services:
       # Admin login is gated by Cloudflare Turnstile; without the secret every
       # login is rejected, so refuse to start instead.
       - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:?set TURNSTILE_SECRET_KEY in .env}
+      # Signs every licensing answer; NGCorion refuses unsigned ones, so start
+      # nothing without it. Generate with license_server/scripts/generate_signing_key.py.
+      - LICENSE_SIGNING_PRIVATE_KEY=${LICENSE_SIGNING_PRIVATE_KEY:?set LICENSE_SIGNING_PRIVATE_KEY in .env (python license_server/scripts/generate_signing_key.py)}
       # Empty by default: nginx (the `front` service) serves the admin UI and
       # proxies /api/ to this container on the same origin, so the browser
       # never makes a cross-origin call in the normal setup and this is a

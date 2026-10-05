@@ -88,6 +88,10 @@ class License(Base):
     
     # VM fingerprint برای قفل شدن روی یک ماشین
     vm_fingerprint = Column(String, nullable=True)
+    # How the binding was made: "client" = computed by NGCorion on the
+    # licensed machine (signed-licensing releases); NULL = a legacy binding to
+    # the license server's own fingerprint, which may move once. Migration 005.
+    fingerprint_source = Column(String(16), nullable=True)
     
     is_active = Column(Boolean, default=True)
     is_pilot_mode = Column(Boolean, default=False)  # آیا در حالت Pilot است؟

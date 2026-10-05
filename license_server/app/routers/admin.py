@@ -125,3 +125,19 @@ def delete_license(
     if not success:
         raise HTTPException(status_code=404, detail="License not found")
     return {"message": "License deleted permanently"}
+
+
+@router.post("/licenses/{license_key}/reset-binding", response_model=schemas.LicenseResponse)
+def reset_license_binding(
+    license_key: str,
+    db: Session = Depends(get_db),
+    admin: str = Depends(get_current_admin)
+):
+    """Release a license from the machine it is bound to, so the customer can activate it on a
+    new or reinstalled server. The old machine is refused from its next validation on.
+    """
+    license = crud.reset_binding(db, license_key)
+    if license is None:
+        raise HTTPException(status_code=404, detail="License not found")
+    logger.info("[Admin] %s released license %s from its machine", admin, license_key)
+    return license
