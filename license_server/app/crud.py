@@ -1,6 +1,6 @@
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from . import models, plans, schemas
+from . import models, offline, plans, schemas
 from .core.portal_events import LicenseEvent, build_event_payload, notifier
 from datetime import datetime, timedelta, timezone
 import logging
@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 # Which transitions emit, and which deliberately do not:
 #
 #   created  create_license, create_license_from_portal
-#   updated  activate_license (first bind), reset_binding, change_plan
+#   updated  activate_license (first bind), reset_binding, change_plan,
+#            set_offline_allowed, issue_offline_license
 #   revoked  deactivate_license, delete_license
 #   expired  the sweep in portal_events.py, not this module
 #
@@ -74,6 +75,7 @@ def create_license(db: Session, license_data: schemas.LicenseCreate) -> models.L
         **plan_fields(plan.code, license_data.addon_packs),
         expires_at=expires_at,
         is_pilot_mode=plan.pilot,
+        offline_allowed=license_data.offline_allowed,
         # Optional portal linkage, chosen by the admin from the phase-4 cache.
         # source stays at its 'manual' default: a person created this, so it
         # falls outside the portal's idempotency index on order_id.
@@ -265,6 +267,81 @@ def change_plan(db: Session, license_key: str, plan_code: Optional[str] = None,
     db.refresh(license)
     notifier.notify(LicenseEvent.UPDATED, license)
     return license
+
+def set_offline_allowed(db: Session, license_key: str, allowed: bool) -> Optional[models.License]:
+    """Mark a license offline (air-gapped) or not. Files already issued keep working until their
+    valid_until; this only decides whether new ones may be issued. None when the key is unknown."""
+    license = get_license_by_key(db, license_key)
+    if license is None:
+        return None
+    license.offline_allowed = bool(allowed)
+    db.commit()
+    db.refresh(license)
+    notifier.notify(LicenseEvent.UPDATED, license)
+    return license
+
+
+class OfflineIssueRefused(Exception):
+    """An offline license file cannot be issued for this license (a 409 with the reason)."""
+
+
+def issue_offline_license(db: Session, license_key: str, request: "offline.OfflineRequest",
+                          issued_by: Optional[str] = None) -> tuple[models.License, datetime]:
+    """Check the license for an offline file, bind it to the request's machine and record the
+    issue. Returns the license and how long the file is valid; the caller signs the file.
+
+    OfflineIssueRefused when the license is unknown to the request, not offline, revoked,
+    expired, or bound to another machine (an admin releases it first: reset_binding).
+    """
+    license = get_license_by_key(db, license_key)
+    if license is None:
+        raise OfflineIssueRefused("License not found")
+    if request.license_key != license.license_key:
+        raise OfflineIssueRefused(
+            f"The request is for license {request.license_key}, not {license.license_key}"
+        )
+    if not license.offline_allowed:
+        raise OfflineIssueRefused("This license is not an offline license; enable the offline option first")
+    if not license.is_active:
+        raise OfflineIssueRefused("This license is revoked")
+    now = datetime.now(timezone.utc)
+    if license.expires_at <= now:
+        raise OfflineIssueRefused("This license has expired")
+    if license.vm_fingerprint and license.vm_fingerprint != request.vm_fingerprint:
+        raise OfflineIssueRefused(
+            "This license is bound to another machine. If NGCorion moved to a new server, "
+            "release the machine binding first"
+        )
+
+    if not license.vm_fingerprint:
+        license.vm_fingerprint = request.vm_fingerprint
+        license.fingerprint_source = "client"
+        license.activated_at = now
+    until = offline.valid_until(now, license.expires_at)
+    license.offline_issued_at = now
+    license.offline_valid_until = until
+    if request.asset_count is not None:
+        license.reported_assets = request.asset_count
+        license.reported_assets_at = now
+    db.add(models.OfflineLicenseIssue(
+        license_id=license.id, issued_at=now, valid_until=until,
+        vm_fingerprint=request.vm_fingerprint, reported_assets=request.asset_count, issued_by=issued_by,
+    ))
+    db.commit()
+    db.refresh(license)
+    notifier.notify(LicenseEvent.UPDATED, license)
+    return license, until
+
+
+def offline_issues(db: Session, license_id: int):
+    """The offline files issued for a license, newest first."""
+    return (
+        db.query(models.OfflineLicenseIssue)
+        .filter(models.OfflineLicenseIssue.license_id == license_id)
+        .order_by(models.OfflineLicenseIssue.issued_at.desc())
+        .all()
+    )
+
 
 def get_all_licenses(db: Session, skip: int = 0, limit: int = 100):
     return db.query(models.License).offset(skip).limit(limit).all()

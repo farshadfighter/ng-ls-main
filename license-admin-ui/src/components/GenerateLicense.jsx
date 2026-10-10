@@ -9,6 +9,7 @@ const EMPTY = {
   organization_name: "",
   plan_code: "NGC-PILOT-5-1M",
   addon_packs: 0,
+  offline_allowed: false,
 };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -52,6 +53,7 @@ export default function GenerateLicense() {
         organization_name: form.organization_name.trim(),
         plan_code: form.plan_code,
         addon_packs: plan?.addonsAllowed ? Number(form.addon_packs) : 0,
+        offline_allowed: form.offline_allowed,
       });
       setCreated(license);
     } catch (err) {
@@ -165,6 +167,19 @@ export default function GenerateLicense() {
               )}
             </div>
           </div>
+
+          <label className="checkline">
+            <input
+              type="checkbox"
+              checked={form.offline_allowed}
+              onChange={(e) => set("offline_allowed", e.target.checked)}
+            />
+            <span>
+              <strong>Offline license</strong> — the customer's NGCorion has no internet access. It runs on
+              a signed license file (valid one year) issued from this console, instead of activation and
+              heartbeats.
+            </span>
+          </label>
 
           <PlanPreview plan={plan} packs={plan?.addonsAllowed ? Number(form.addon_packs) || 0 : 0} />
 

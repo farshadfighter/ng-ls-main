@@ -132,6 +132,15 @@ organization_token = sha256(unique).hexdigest()`}</div>
             soon as it reaches the server again it returns to the license's own plan. The server
             never changes a license because it was offline.
           </p>
+          <h3>Offline (air-gapped) licenses</h3>
+          <p>
+            For an NGCorion that never reaches this server: mark the license <em>offline</em>. The
+            customer downloads a request file on NGCorion's License page, you upload it on the license
+            (Offline license → Issue license file), and the signed license file you get back is uploaded
+            on NGCorion. It is bound to that machine and valid one year (never past the license's
+            expiry); no heartbeats, no 48-hour rule. It cannot be revoked before it ends, so every issued
+            file is listed on the license.
+          </p>
           <h3>Request signing</h3>
           <p>Protected requests are signed with HMAC-SHA256 over a canonical payload:</p>
           <div className="codeblock">{`payload   = json.dumps(request_data, sort_keys=True)

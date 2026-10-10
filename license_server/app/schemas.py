@@ -34,6 +34,9 @@ class LicenseCreate(_PlanChoice):
     customer_name: str
     customer_email: EmailStr
     organization_name: str
+    # An offline (air-gapped) license: runs on signed license files issued
+    # from the admin UI instead of activation and heartbeats (app/offline.py).
+    offline_allowed: bool = False
 
     # Optional link to the portal user and order this license was sold under,
     # for a license an admin creates by hand. The admin UI finds these through
@@ -73,6 +76,35 @@ class LicenseHeartbeat(LicenseValidate):
     asset_count: Optional[int] = Field(default=None, ge=0, le=10_000_000)
 
 
+class OfflineToggle(BaseModel):
+    """Body of POST /api/admin/licenses/{key}/offline."""
+    allowed: bool
+
+
+class OfflineFileRequest(BaseModel):
+    """Body of POST /api/admin/licenses/{key}/offline-file: the request file NGCorion made."""
+    request: str = Field(min_length=1, max_length=8192)
+
+
+class OfflineFileResponse(BaseModel):
+    """A signed offline license file, to hand to the customer."""
+    filename: str
+    content: str
+    valid_until: datetime
+    license: "LicenseResponse"
+
+
+class OfflineIssueResponse(BaseModel):
+    issued_at: datetime
+    valid_until: datetime
+    vm_fingerprint: str
+    reported_assets: Optional[int]
+    issued_by: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
 class PlanChange(BaseModel):
     """Body of POST /api/admin/licenses/{key}/plan. Either field may be left out."""
 
@@ -104,7 +136,12 @@ class LicenseResponse(BaseModel):
     vm_fingerprint: Optional[str]
     is_active: bool
     is_pilot_mode: bool
-    
+
+    # Offline (air-gapped) license and its most recent license file.
+    offline_allowed: bool = False
+    offline_issued_at: Optional[datetime] = None
+    offline_valid_until: Optional[datetime] = None
+
     created_at: datetime
     activated_at: Optional[datetime]
     expires_at: datetime
@@ -336,3 +373,7 @@ class PortalSyncStatusResponse(BaseModel):
     running: bool
     interval_seconds: int
     last_result: Optional[PortalSyncResultResponse] = None
+
+
+# OfflineFileResponse names LicenseResponse before it is defined.
+OfflineFileResponse.model_rebuild()

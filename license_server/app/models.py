@@ -3,6 +3,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    ForeignKey,
     Index,
     Integer,
     String,
@@ -94,6 +95,14 @@ class License(Base):
     fingerprint_source = Column(String(16), nullable=True)
     
     is_active = Column(Boolean, default=True)
+
+    # Offline (air-gapped) license: the customer's NGCorion never reaches this
+    # server, so it runs on a signed license file issued from the admin UI
+    # (app/offline.py) instead of activation and heartbeats. Set by an admin,
+    # per license. offline_*_at describe the most recent file issued.
+    offline_allowed = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    offline_issued_at = Column(DateTime(timezone=True), nullable=True)
+    offline_valid_until = Column(DateTime(timezone=True), nullable=True)
     # A trial license. Set for the pilot plan, or by the portal for a trial
     # sold on another plan. Not set because a machine was offline: NGCorion
     # falls back to the pilot entitlement on its own, and only until it
@@ -149,6 +158,26 @@ class License(Base):
         catalog no longer has."""
         plan = plans.PLANS.get(self.plan_code or "")
         return plan.name if plan else (self.plan_code or "")
+
+
+class OfflineLicenseIssue(Base):
+    """One offline license file issued for a license: when, by whom, for which machine, valid
+    until when, and the asset count the request reported. A record of what is out there, since
+    an issued file cannot be revoked before valid_until."""
+
+    __tablename__ = "offline_license_issues"
+
+    __table_args__ = (
+        Index('idx_offline_issue_license', 'license_id'),
+    )
+
+    id = Column(Integer, primary_key=True)
+    license_id = Column(Integer, ForeignKey("licenses.id", ondelete="CASCADE"), nullable=False)
+    issued_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    valid_until = Column(DateTime(timezone=True), nullable=False)
+    vm_fingerprint = Column(String, nullable=False)
+    reported_assets = Column(Integer, nullable=True)
+    issued_by = Column(String(255), nullable=True)
 
 
 class PortalUserCache(Base):

@@ -4,7 +4,8 @@ import requests
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from typing import List
-from .. import crud, plans, schemas
+from .. import crud, offline, plans, schemas
+from ..utils.license_token import SigningKeyMissing, build_claims, get_signer
 from ..core.security import get_current_admin, create_access_token, verify_admin_credentials
 from ..core.config import settings
 from ..database import get_db
@@ -170,3 +171,75 @@ def change_license_plan(
     logger.info("[Admin] %s set license %s to %s with %s add-on pack(s)",
                 admin, license_key, license.plan_code, license.addon_packs)
     return license
+
+
+# ---------- Offline (air-gapped) licenses: app/offline.py ----------
+
+@router.post("/licenses/{license_key}/offline", response_model=schemas.LicenseResponse)
+def set_license_offline(
+    license_key: str,
+    body: schemas.OfflineToggle,
+    db: Session = Depends(get_db),
+    admin: str = Depends(get_current_admin)
+):
+    """Mark a license offline (its NGCorion never reaches this server) or not. Turning it off only
+    stops new files; one already issued works until its valid_until."""
+    license = crud.set_offline_allowed(db, license_key, body.allowed)
+    if license is None:
+        raise HTTPException(status_code=404, detail="License not found")
+    logger.info("[Admin] %s set offline=%s on license %s", admin, body.allowed, license_key)
+    return license
+
+
+@router.post("/licenses/{license_key}/offline-file", response_model=schemas.OfflineFileResponse)
+def issue_offline_license_file(
+    license_key: str,
+    body: schemas.OfflineFileRequest,
+    db: Session = Depends(get_db),
+    admin: str = Depends(get_current_admin)
+):
+    """Sign an offline license file for the request file the customer's NGCorion made: bound to
+    that machine, with the license's plan and asset limit, valid for one year (or until the
+    license expires, if sooner). 422 for a file that is not a request, 409 when the license
+    cannot have one (not offline, revoked, expired, bound to another machine)."""
+    try:
+        request = offline.parse_request(body.request)
+    except offline.InvalidOfflineRequest as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    try:
+        signer = get_signer()
+    except SigningKeyMissing as exc:
+        logger.error("[License] %s", exc)
+        raise HTTPException(status_code=503, detail="License signing is not configured on the license server")
+    try:
+        license, until = crud.issue_offline_license(db, license_key, request, issued_by=admin)
+    except crud.OfflineIssueRefused as exc:
+        status = 404 if str(exc) == "License not found" else 409
+        raise HTTPException(status_code=status, detail=str(exc))
+
+    token = signer.sign(build_claims(
+        "offline", license_key=license.license_key, vm_fingerprint=request.vm_fingerprint,
+        valid=True, message="offline license", nonce=request.nonce, license=license,
+        extra={"offline_until": int(until.timestamp())},
+    ))
+    logger.info("[Admin] %s issued an offline license file for %s, valid until %s",
+                admin, license_key, until.isoformat())
+    return schemas.OfflineFileResponse(
+        filename=offline.file_name(license.organization_name, license.license_key),
+        content=offline.license_file(token),
+        valid_until=until,
+        license=license,
+    )
+
+
+@router.get("/licenses/{license_key}/offline-issues", response_model=List[schemas.OfflineIssueResponse])
+def list_offline_issues(
+    license_key: str,
+    db: Session = Depends(get_db),
+    admin: str = Depends(get_current_admin)
+):
+    """The offline license files issued for a license, newest first."""
+    license = crud.get_license_by_key(db, license_key)
+    if license is None:
+        raise HTTPException(status_code=404, detail="License not found")
+    return crud.offline_issues(db, license.id)

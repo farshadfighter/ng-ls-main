@@ -56,6 +56,34 @@ good. Migration 006 logs the licenses that look like they were downgraded that
 way: a pilot plan with a one-year term. Give each its real plan back in the
 admin UI.)
 
+## Offline (air-gapped) licenses
+
+For a customer whose NGCorion never reaches the internet. An admin marks the
+license **offline** (when creating it, or later on the license), and the
+license works by file instead of activation and heartbeats:
+
+1. On NGCorion's License page the customer enters the license key and
+   downloads a **request file** (`.ngcreq`): license key, the machine's
+   fingerprint, the current asset count.
+2. The admin uploads it in the admin UI (License → Offline license → Issue
+   license file) and gets a **license file** (`.ngclic`), signed with the
+   same key as every other answer: the plan, the asset limit, bound to that
+   machine, valid **one year** (never past the license's own expiry).
+3. The customer uploads the license file on NGCorion's License page. NGCorion
+   verifies it with its built-in public key and runs on it, without any
+   contact, until the file's end date; the 48-hour/pilot rule does not apply.
+   Renewal: the same exchange again (from the same machine).
+
+A file cannot be edited, forged or moved to another machine. It cannot be
+revoked before its end date either, so every issued file is recorded
+(License → Offline license, and `offline_license_issues`). Turning the
+offline option off stops new files only. To move to a new server, release
+the machine binding first.
+
+    POST /api/admin/licenses/{key}/offline        {"allowed": true}
+    POST /api/admin/licenses/{key}/offline-file   {"request": "<request file>"}
+    GET  /api/admin/licenses/{key}/offline-issues
+
 ## Changing a plan
 
 Admin UI → Licenses → a license → **Plan & add-ons**, or

@@ -123,6 +123,17 @@ export const resetBinding = (licenseKey) =>
 export const changePlan = (licenseKey, change) =>
   api.post(`/api/admin/licenses/${encodeURIComponent(licenseKey)}/plan`, change, { auth: true });
 
+// Offline (air-gapped) licenses: mark a license offline, and sign a one-year license file for
+// the request file the customer's NGCorion made.
+export const setOffline = (licenseKey, allowed) =>
+  api.post(`/api/admin/licenses/${encodeURIComponent(licenseKey)}/offline`, { allowed }, { auth: true });
+
+export const issueOfflineFile = (licenseKey, requestText) =>
+  api.post(`/api/admin/licenses/${encodeURIComponent(licenseKey)}/offline-file`, { request: requestText }, { auth: true });
+
+export const listOfflineIssues = (licenseKey) =>
+  api.get(`/api/admin/licenses/${encodeURIComponent(licenseKey)}/offline-issues`, { auth: true });
+
 // Public client endpoints (used by the Test panel) — no auth, no signature.
 export const testActivate = (license_key, vm_fingerprint) =>
   api.post("/api/licenses/activate", { license_key, vm_fingerprint });

@@ -178,6 +178,7 @@ export default function LicenseList() {
                     </td>
                     <td>
                       <span className="badge plan">{licensePlanLabel(l)}</span>
+                      {l.offline_allowed && <span className="badge offline">Offline</span>}
                     </td>
                     <td className="num">
                       {l.reported_assets ?? "—"} / {fmtAssets(l.max_assets)}
