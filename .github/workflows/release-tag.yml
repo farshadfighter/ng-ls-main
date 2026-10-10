@@ -1,0 +1,48 @@
+# Creates a release tag: Actions -> "Release tag" -> Run workflow.
+#
+# The version must be the one in the code at that commit (license_server/
+# app/main.py), and an existing tag is never moved. The tag is annotated and
+# made by GitHub Actions, so who started it is on record in the run.
+# See CHANGELOG.md; versions follow Semantic Versioning.
+name: Release tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, without the v (e.g. 2.0.0)"
+        required: true
+      ref:
+        description: "Commit or branch to tag"
+        required: false
+        default: main
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - name: Check and create the tag
+        env:
+          VERSION: ${{ inputs.version }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' \
+            || { echo "::error::$VERSION is not a semantic version"; exit 1; }
+          code="$(grep -oE '(VERSION *= *|version=)"[^"]+"' license_server/app/main.py | head -n1 | sed -E 's/.*"([^"]+)"/\1/')"
+          [ "$code" = "$VERSION" ] || { echo "::error::the code at this commit is version $code, not $VERSION"; exit 1; }
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::tag v$VERSION exists already; tags are never moved"; exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "NGCorion License Server $VERSION (tagged by $ACTOR)"
+          git push origin "v$VERSION"
+          echo "Tagged $(git rev-parse --short HEAD) as v$VERSION" >> "$GITHUB_STEP_SUMMARY"
