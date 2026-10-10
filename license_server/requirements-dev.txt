@@ -1,5 +1,5 @@
 # Tests and checks only; not installed in the image.
 -r requirements.txt
 httpx==0.28.1
-ruff==0.14.0
+ruff==0.16.10
 pip-audit==2.9.0
