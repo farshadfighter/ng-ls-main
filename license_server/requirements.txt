@@ -2,7 +2,7 @@
 # versions NGCorion ships (its uv.lock) where the two overlap; the CI job runs
 # pip-audit against this file.
 fastapi==0.142.2
-uvicorn[standard]==0.52.0
+uvicorn[standard]==0.54.0
 sqlalchemy==2.0.51
 psycopg2-binary==2.9.13
 pydantic[email]==2.13.4
