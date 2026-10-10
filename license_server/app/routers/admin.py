@@ -232,6 +232,27 @@ def issue_offline_license_file(
     )
 
 
+@router.post("/offline/inspect", response_model=schemas.OfflineInspectResponse)
+def inspect_offline_file(
+    body: schemas.OfflineInspectRequest,
+    db: Session = Depends(get_db),
+    admin: str = Depends(get_current_admin)
+):
+    """Check an offline file without changing anything (the Test page). A request file: what it
+    asks for and whether a license file could be issued for it. A license file: what it grants,
+    whether this server's key signed it, whether it is still valid, and whether it is in the issue
+    record. 422 for text that is neither."""
+    try:
+        signer = get_signer()
+        public_raw, kid = signer.public_raw, signer.kid
+    except SigningKeyMissing:
+        public_raw = kid = None
+    try:
+        return crud.inspect_offline_file(db, body.content, public_raw, kid)
+    except (offline.InvalidOfflineRequest, offline.InvalidOfflineLicense) as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
 @router.get("/licenses/{license_key}/offline-issues", response_model=List[schemas.OfflineIssueResponse])
 def list_offline_issues(
     license_key: str,

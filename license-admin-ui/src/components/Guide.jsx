@@ -141,6 +141,12 @@ organization_token = sha256(unique).hexdigest()`}</div>
             expiry); no heartbeats, no 48-hour rule. It cannot be revoked before it ends, so every issued
             file is listed on the license.
           </p>
+          <p>
+            To look at a file without issuing anything, use <em>Test → Check an offline file</em>: for a
+            request it shows what it asks for and whether a license file can be issued; for a license
+            file, whether this server signed it, how long it is valid, and whether it is in the issue
+            record.
+          </p>
           <h3>Request signing</h3>
           <p>Protected requests are signed with HMAC-SHA256 over a canonical payload:</p>
           <div className="codeblock">{`payload   = json.dumps(request_data, sort_keys=True)

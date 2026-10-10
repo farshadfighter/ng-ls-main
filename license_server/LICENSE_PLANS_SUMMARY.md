@@ -83,6 +83,15 @@ the machine binding first.
     POST /api/admin/licenses/{key}/offline        {"allowed": true}
     POST /api/admin/licenses/{key}/offline-file   {"request": "<request file>"}
     GET  /api/admin/licenses/{key}/offline-issues
+    POST /api/admin/offline/inspect               {"content": "<request or license file>"}
+
+The last one changes nothing; it is the admin UI's Test → *Check an offline
+file*. For a request it reports what the request asks for and whether a
+license file can be issued for it (the same rule as issuing). For a license
+file it reports what the file grants, whether this server's key signed it,
+whether it is still within its term, whether the license is still active and
+bound to that machine, and whether the file is in the issue record. A file
+whose signature does not verify is not compared with anything.
 
 ## Changing a plan
 

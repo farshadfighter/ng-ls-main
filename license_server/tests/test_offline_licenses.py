@@ -196,5 +196,89 @@ class OfflineIssueTest(unittest.TestCase):
         self.assertIn("expired", r.json()["detail"])
 
 
+    # --- the Test page's file check (POST /api/admin/offline/inspect) -----------------------
+
+    def inspect(self, text):
+        return self.client.post("/api/admin/offline/inspect", json={"content": text})
+
+    def texts(self, body):
+        return [c["text"] for c in body["checks"] if not c["ok"]]
+
+    def test_inspecting_a_request_says_what_issuing_would_do_and_changes_nothing(self):
+        lic = self.create(offline_allowed=True)
+        key = lic["license_key"]
+        r = self.inspect(request_text(key, assets=12))
+        self.assertEqual(r.status_code, 200, r.text)
+        body = r.json()
+        self.assertEqual((body["kind"], body["ok"], body["license_key"], body["vm_fingerprint"], body["asset_count"]),
+                         ("request", True, key, FP, 12))
+        self.assertEqual((body["plan_code"], body["max_assets"]), ("NGC-ENT-500-1Y", 600))
+        self.assertTrue(any("can be issued" in c["text"] for c in body["checks"]))
+        # read-only: no binding, no record
+        self.db.expire_all()
+        row = crud.get_license_by_key(self.db, key)
+        self.assertIsNone(row.vm_fingerprint)
+        self.assertEqual(self.client.get(f"/api/admin/licenses/{key}/offline-issues").json(), [])
+
+    def test_inspecting_a_request_reports_why_no_file_can_be_issued(self):
+        lic = self.create()
+        body = self.inspect(request_text(lic["license_key"])).json()
+        self.assertFalse(body["ok"])
+        self.assertIn("not an offline license", " ".join(self.texts(body)))
+
+        body = self.inspect(request_text("ZZZZ-YYYY-XXXX-WWWW")).json()
+        self.assertFalse(body["ok"])
+        self.assertIn("no license ZZZZ-YYYY-XXXX-WWWW", " ".join(self.texts(body)))
+
+    def test_an_issued_license_file_checks_out(self):
+        lic = self.create(offline_allowed=True)
+        key = lic["license_key"]
+        content = self.issue(key, request_text(key)).json()["content"]
+        body = self.inspect(content).json()
+        self.assertEqual((body["kind"], body["ok"], body["signature_valid"]), ("license", True, True), body)
+        self.assertEqual((body["license_key"], body["vm_fingerprint"], body["max_assets"], body["addon_packs"]),
+                         (key, FP, 600, 2))
+        self.assertEqual(body["claims"]["typ"], "offline")
+        self.assertTrue(any("In the issue record" in c["text"] and "test-admin" in c["text"] for c in body["checks"]))
+
+    def test_an_altered_or_foreign_license_file_is_caught(self):
+        lic = self.create(offline_allowed=True)
+        key = lic["license_key"]
+        header, token = self.issue(key, request_text(key)).json()["content"].strip().split("\n")
+
+        # altered: a bigger asset limit, the original signature
+        body_part, sig = token.split(".")
+        pad = lambda v: v + "=" * (-len(v) % 4)  # noqa: E731
+        claims = json.loads(base64.urlsafe_b64decode(pad(body_part)))
+        claims["limits"]["max_assets"] = 100000
+        forged = b64url(json.dumps(claims, sort_keys=True, separators=(",", ":")).encode())
+        body = self.inspect(f"{header}\n{forged}.{sig}\n").json()
+        self.assertEqual((body["ok"], body["signature_valid"], body["max_assets"]), (False, False, 100000))
+        self.assertIn("altered", " ".join(self.texts(body)))
+        # an unverified file is not matched against the issue record
+        self.assertFalse(any("issue record" in c["text"] for c in body["checks"]))
+
+        # signed with some other key
+        other = license_token.TokenSigner(Ed25519PrivateKey.generate())
+        token = other.sign(dict(claims, typ="offline"))
+        body = self.inspect(f"{header}\n{token}\n").json()
+        self.assertFalse(body["signature_valid"])
+        self.assertIn(f"Signed with key {other.kid}", " ".join(self.texts(body)))
+
+    def test_a_revoked_license_is_flagged_on_its_file(self):
+        lic = self.create(offline_allowed=True)
+        key = lic["license_key"]
+        content = self.issue(key, request_text(key)).json()["content"]
+        crud.deactivate_license(self.db, key)
+        body = self.inspect(content).json()
+        self.assertTrue(body["signature_valid"])
+        self.assertFalse(body["ok"])
+        self.assertIn("revoked since", " ".join(self.texts(body)))
+
+    def test_anything_else_is_refused(self):
+        for bad in ("hello", f"{offline.LICENSE_HEADER}\nnot-a-token", f"{offline.REQUEST_HEADER}\n!!!"):
+            self.assertEqual(self.inspect(bad).status_code, 422, bad)
+
+
 if __name__ == "__main__":
     unittest.main()

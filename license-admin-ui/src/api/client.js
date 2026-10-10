@@ -134,6 +134,10 @@ export const issueOfflineFile = (licenseKey, requestText) =>
 export const listOfflineIssues = (licenseKey) =>
   api.get(`/api/admin/licenses/${encodeURIComponent(licenseKey)}/offline-issues`, { auth: true });
 
+// Checks an offline request (.ngcreq) or license file (.ngclic) against this server; changes nothing.
+export const inspectOfflineFile = (content) =>
+  api.post("/api/admin/offline/inspect", { content }, { auth: true });
+
 // Public client endpoints (used by the Test panel) — no auth, no signature.
 export const testActivate = (license_key, vm_fingerprint) =>
   api.post("/api/licenses/activate", { license_key, vm_fingerprint });

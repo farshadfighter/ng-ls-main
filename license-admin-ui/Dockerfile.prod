@@ -25,4 +25,5 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 # The TLS key/cert are deliberately NOT copied in: they are mounted at runtime
 # from ./certs (see docker-compose.yml) so no private key ever lands in an image
 # layer. nginx.conf expects them at /etc/nginx/certs/.
-EXPOSE 80 443
+# 8081/8443 are reached only by Traefik in the Let's Encrypt setup (ACME.md).
+EXPOSE 80 443 8081 8443

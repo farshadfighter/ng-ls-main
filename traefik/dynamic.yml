@@ -1,0 +1,74 @@
+# Traefik routing for the Let's Encrypt setup (docker-compose.acme.yml).
+#
+# Traefik owns host port 443 and decides per connection, by the TLS SNI name:
+#
+#   lic.ngcorion.com  -> Traefik terminates TLS with the Let's Encrypt
+#                        certificate and forwards cleartext to nginx :8081.
+#   anything else     -> passed through still encrypted to nginx :8443, which
+#   (bare IP, other      answers with the self-signed certificate exactly as
+#    names, no SNI)      port 443 did before, so clients that connect by IP and
+#                        trust that certificate keep working unchanged.
+#
+# Both hops carry a PROXY protocol v2 header, so nginx (and behind it the
+# /internal/ allow list and the per-IP rate limiter) sees the real client
+# address instead of Traefik's.
+#
+# TCP routers rather than HTTP routers on purpose: the passthrough route has to
+# be TCP (Traefik must not decrypt what it has no certificate for), and TCP
+# routers are matched before HTTP routers on an entry point, so the named route
+# is TCP too. Traefik reads nothing from the HTTP traffic itself.
+#
+# The name is fixed: lic.ngcorion.com is the address built into NGCorion.
+
+tcp:
+  routers:
+    licensing:
+      entryPoints: [websecure]
+      rule: "HostSNI(`lic.ngcorion.com`)"
+      service: nginx-plain
+      tls:
+        certResolver: letsencrypt
+        options: http1
+        domains:
+          - main: lic.ngcorion.com
+
+    direct:
+      entryPoints: [websecure]
+      # HostSNI(`*`) also matches clients that send no SNI at all (an IP URL).
+      rule: "HostSNI(`*`)"
+      # Lowest priority: only what the named route above did not take.
+      priority: 1
+      service: nginx-tls
+      tls:
+        passthrough: true
+
+  services:
+    nginx-plain:
+      loadBalancer:
+        serversTransport: proxy-v2
+        servers:
+          - address: "front:8081"
+    nginx-tls:
+      loadBalancer:
+        serversTransport: proxy-v2
+        servers:
+          - address: "front:8443"
+
+  serversTransports:
+    proxy-v2:
+      proxyProtocol:
+        version: 2
+
+tls:
+  options:
+    default:
+      # Same floor as nginx's own listener.
+      minVersion: VersionTLS12
+    http1:
+      minVersion: VersionTLS12
+      # Only HTTP/1.1. Traefik hands the decrypted bytes to nginx as they are
+      # (a TCP route, see above), and nginx's :8081 speaks HTTP/1.1; offering
+      # h2 here would let a browser pick HTTP/2 and get a broken connection.
+      # The Let's Encrypt challenge (acme-tls/1) is answered by Traefik before
+      # these options apply.
+      alpnProtocols: [http/1.1]

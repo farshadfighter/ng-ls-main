@@ -285,6 +285,24 @@ class OfflineIssueRefused(Exception):
     """An offline license file cannot be issued for this license (a 409 with the reason)."""
 
 
+def offline_issue_refusal(license: models.License, request: "offline.OfflineRequest",
+                          now: datetime) -> Optional[str]:
+    """Why no offline file can be issued for this license and request, or None when one can.
+    The one rule, shared by issuing and by the admin UI's file check (inspect_offline_file)."""
+    if request.license_key != license.license_key:
+        return f"The request is for license {request.license_key}, not {license.license_key}"
+    if not license.offline_allowed:
+        return "This license is not an offline license; enable the offline option first"
+    if not license.is_active:
+        return "This license is revoked"
+    if license.expires_at <= now:
+        return "This license has expired"
+    if license.vm_fingerprint and license.vm_fingerprint != request.vm_fingerprint:
+        return ("This license is bound to another machine. If NGCorion moved to a new server, "
+                "release the machine binding first")
+    return None
+
+
 def issue_offline_license(db: Session, license_key: str, request: "offline.OfflineRequest",
                           issued_by: Optional[str] = None) -> tuple[models.License, datetime]:
     """Check the license for an offline file, bind it to the request's machine and record the
@@ -296,22 +314,10 @@ def issue_offline_license(db: Session, license_key: str, request: "offline.Offli
     license = get_license_by_key(db, license_key)
     if license is None:
         raise OfflineIssueRefused("License not found")
-    if request.license_key != license.license_key:
-        raise OfflineIssueRefused(
-            f"The request is for license {request.license_key}, not {license.license_key}"
-        )
-    if not license.offline_allowed:
-        raise OfflineIssueRefused("This license is not an offline license; enable the offline option first")
-    if not license.is_active:
-        raise OfflineIssueRefused("This license is revoked")
     now = datetime.now(timezone.utc)
-    if license.expires_at <= now:
-        raise OfflineIssueRefused("This license has expired")
-    if license.vm_fingerprint and license.vm_fingerprint != request.vm_fingerprint:
-        raise OfflineIssueRefused(
-            "This license is bound to another machine. If NGCorion moved to a new server, "
-            "release the machine binding first"
-        )
+    refusal = offline_issue_refusal(license, request, now)
+    if refusal:
+        raise OfflineIssueRefused(refusal)
 
     if not license.vm_fingerprint:
         license.vm_fingerprint = request.vm_fingerprint
@@ -331,6 +337,142 @@ def issue_offline_license(db: Session, license_key: str, request: "offline.Offli
     db.refresh(license)
     notifier.notify(LicenseEvent.UPDATED, license)
     return license, until
+
+
+def _check(ok: bool, text: str) -> dict:
+    return {"ok": ok, "text": text}
+
+
+def _when(ts) -> Optional[datetime]:
+    if isinstance(ts, (int, float)) and not isinstance(ts, bool):
+        try:
+            return datetime.fromtimestamp(ts, tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    return None
+
+
+def _day(value: datetime) -> str:
+    return value.strftime("%Y-%m-%d %H:%M UTC")
+
+
+def inspect_offline_file(db: Session, text: str, public_raw: Optional[bytes], key_id: Optional[str]) -> dict:
+    """What an offline request or license file says, checked against this server; changes
+    nothing. For the admin UI's Test page.
+
+    A request: its contents, and whether a license file could be issued for it now (the same
+    rule as issuing). A license file: its claims, whether this server's key signed it, whether it
+    is still within its term, whether it still matches the license's machine binding, and
+    whether it is in the issue record.
+
+    public_raw / key_id: this server's signing key; None when signing is not configured (the
+    signature is then reported as unchecked). Raises offline.InvalidOfflineRequest /
+    InvalidOfflineLicense for text that is neither kind of file.
+    """
+    now = datetime.now(timezone.utc)
+    kind = offline.kind_of(text)
+
+    if kind == "request":
+        req = offline.parse_request(text)
+        result = {
+            "kind": "request", "license_key": req.license_key, "vm_fingerprint": req.vm_fingerprint,
+            "asset_count": req.asset_count, "nonce": req.nonce, "created_at": req.created_at,
+        }
+        checks = [_check(True, "The request file is well formed")]
+        license = get_license_by_key(db, req.license_key)
+        if license is None:
+            checks.append(_check(False, f"There is no license {req.license_key} on this server"))
+        else:
+            result.update(license_expires_at=license.expires_at, plan_code=license.plan_code,
+                          plan_name=license.plan_name, max_assets=license.max_assets,
+                          addon_packs=license.addon_packs)
+            if not license.vm_fingerprint:
+                checks.append(_check(True, "The license is not bound to a machine yet; issuing binds it to this one"))
+            elif license.vm_fingerprint == req.vm_fingerprint:
+                checks.append(_check(True, "The license is bound to this machine"))
+            refusal = offline_issue_refusal(license, req, now)
+            if refusal:
+                checks.append(_check(False, refusal))
+            else:
+                until = offline.valid_until(now, license.expires_at)
+                checks.append(_check(True, f"A license file can be issued; it would be valid until {_day(until)}"))
+        result["checks"] = checks
+        result["ok"] = all(c["ok"] for c in checks)
+        return result
+
+    if kind != "license":
+        raise offline.InvalidOfflineRequest(
+            "This is neither an NGCorion offline request (.ngcreq) nor a license file (.ngclic)."
+        )
+
+    parsed = offline.read_license_file(text, public_raw)
+    signature_valid, claims = parsed.signature_valid, parsed.claims
+    limits = claims.get("limits") if isinstance(claims.get("limits"), dict) else {}
+    until = _when(claims.get("offline_until"))
+    result = {
+        "kind": "license", "license_key": claims.get("lic"), "vm_fingerprint": claims.get("fp"),
+        "nonce": claims.get("nonce"), "created_at": _when(claims.get("iat")),
+        "valid_until": until, "license_expires_at": _when(claims.get("exp")),
+        "plan_code": claims.get("plan"), "plan_name": claims.get("plan_name"),
+        "max_assets": limits.get("max_assets"), "addon_packs": limits.get("addon_packs"),
+        "signature_valid": signature_valid, "key_id": claims.get("kid"), "claims": claims,
+    }
+
+    checks = []
+    if signature_valid is None:
+        checks.append(_check(False, "The signature could not be checked: signing is not configured on this server"))
+    elif signature_valid:
+        checks.append(_check(True, f"Signed by this server's key ({key_id})"))
+    elif claims.get("kid") and claims.get("kid") != key_id:
+        checks.append(_check(False, f"Signed with key {claims.get('kid')}, not this server's key ({key_id})"))
+    else:
+        checks.append(_check(False, "The signature does not match: the file was altered"))
+
+    if not signature_valid:
+        # Nothing in an unverified file can be relied on, so it is not compared with the license or
+        # the issue record either: an altered file can carry a real license's key and dates.
+        checks.append(_check(False, "Its contents are not verified, so they were not checked any further"))
+        result["checks"] = checks
+        result["ok"] = False
+        return result
+
+    if claims.get("typ") == "offline":
+        checks.append(_check(True, "It is an offline license file"))
+    else:
+        checks.append(_check(False, f"It is not an offline license file (type {claims.get('typ')!r})"))
+    if until is None:
+        checks.append(_check(False, "It names no end date"))
+    elif until > now:
+        checks.append(_check(True, f"Valid until {_day(until)}"))
+    else:
+        checks.append(_check(False, f"It ended on {_day(until)}"))
+
+    license = get_license_by_key(db, claims.get("lic")) if isinstance(claims.get("lic"), str) else None
+    if license is None:
+        checks.append(_check(False, f"There is no license {claims.get('lic')} on this server"))
+    else:
+        if not license.is_active:
+            checks.append(_check(False, "The license has been revoked since. The file still works on its "
+                                        "machine until its end date: an issued file cannot be recalled"))
+        if license.vm_fingerprint and license.vm_fingerprint != claims.get("fp"):
+            checks.append(_check(False, "The license is now bound to another machine"))
+        issued = None
+        if until is not None:
+            issued = (
+                db.query(models.OfflineLicenseIssue)
+                .filter(models.OfflineLicenseIssue.license_id == license.id,
+                        models.OfflineLicenseIssue.vm_fingerprint == claims.get("fp"))
+                .all()
+            )
+            issued = next((i for i in issued if abs((i.valid_until - until).total_seconds()) < 1), None)
+        if issued is not None:
+            by = f" by {issued.issued_by}" if issued.issued_by else ""
+            checks.append(_check(True, f"In the issue record: issued {_day(issued.issued_at)}{by}"))
+        else:
+            checks.append(_check(False, "Not in this server's issue record"))
+    result["checks"] = checks
+    result["ok"] = all(c["ok"] for c in checks)
+    return result
 
 
 def offline_issues(db: Session, license_id: int):

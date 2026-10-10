@@ -1,6 +1,6 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 from . import plans
 
@@ -103,6 +103,37 @@ class OfflineIssueResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class OfflineInspectRequest(BaseModel):
+    """Body of POST /api/admin/offline/inspect: an offline request or license file."""
+    content: str = Field(min_length=1, max_length=8192)
+
+
+class OfflineCheck(BaseModel):
+    ok: bool
+    text: str
+
+
+class OfflineInspectResponse(BaseModel):
+    """What an offline file says and how it checks out against this server (Test page)."""
+    kind: str  # "request" or "license"
+    ok: bool  # every check passed
+    checks: List[OfflineCheck]
+    license_key: Optional[str] = None
+    vm_fingerprint: Optional[str] = None
+    nonce: Optional[str] = None
+    created_at: Optional[datetime] = None
+    asset_count: Optional[int] = None  # request only
+    valid_until: Optional[datetime] = None  # license file only: offline_until
+    license_expires_at: Optional[datetime] = None
+    plan_code: Optional[str] = None
+    plan_name: Optional[str] = None
+    max_assets: Optional[int] = None
+    addon_packs: Optional[int] = None
+    signature_valid: Optional[bool] = None  # license file only; None = not checked
+    key_id: Optional[str] = None
+    claims: Optional[Dict[str, Any]] = None
 
 
 class PlanChange(BaseModel):

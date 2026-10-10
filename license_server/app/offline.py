@@ -25,7 +25,10 @@ import binascii
 import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Dict, Optional
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 REQUEST_HEADER = "NGCORION-OFFLINE-REQUEST-1"
 LICENSE_HEADER = "NGCORION-OFFLINE-LICENSE-1"
@@ -35,6 +38,10 @@ MAX_REQUEST_BYTES = 8192
 
 class InvalidOfflineRequest(ValueError):
     """The uploaded text is not an NGCorion offline license request."""
+
+
+class InvalidOfflineLicense(ValueError):
+    """The uploaded text is not an NGCorion offline license file."""
 
 
 @dataclass(frozen=True)
@@ -98,3 +105,46 @@ def license_file(token: str) -> str:
 def file_name(organization_name: str, license_key: str) -> str:
     safe = "".join(c if c.isalnum() else "_" for c in (organization_name or "license")).strip("_").lower()
     return f"{safe or 'license'}_{license_key}.ngclic"
+
+
+@dataclass(frozen=True)
+class OfflineLicenseFile:
+    """What an uploaded license file says, and whether a given key signed it."""
+    claims: Dict[str, Any]
+    signature_valid: Optional[bool]  # None: no key to check it with
+
+
+def kind_of(text: str) -> Optional[str]:
+    """'request' or 'license' by the file's first line; None for anything else."""
+    first = (text or "").strip().split("\n", 1)[0].strip()
+    return {REQUEST_HEADER: "request", LICENSE_HEADER: "license"}.get(first)
+
+
+def read_license_file(text: str, public_raw: Optional[bytes]) -> OfflineLicenseFile:
+    """The claims in an uploaded license file, and whether public_raw (this server's key) signed
+    them (None when no key is given). A wrong signature is reported, not raised: the admin wants
+    to know what the file says either way. InvalidOfflineLicense when the text is not a license
+    file at all."""
+    if not text or len(text) > MAX_REQUEST_BYTES:
+        raise InvalidOfflineLicense("This is not an NGCorion offline license file.")
+    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
+    if len(lines) != 2 or lines[0] != LICENSE_HEADER:
+        raise InvalidOfflineLicense("This is not an NGCorion offline license file (.ngclic).")
+    parts = lines[1].split(".")
+    if len(parts) != 2:
+        raise InvalidOfflineLicense("The license file is damaged.")
+    try:
+        payload, signature = _b64decode(parts[0]), _b64decode(parts[1])
+        claims = json.loads(payload)
+    except (binascii.Error, ValueError, UnicodeDecodeError) as exc:
+        raise InvalidOfflineLicense("The license file is damaged.") from exc
+    if not isinstance(claims, dict):
+        raise InvalidOfflineLicense("The license file is damaged.")
+    valid = None
+    if public_raw is not None:
+        try:
+            Ed25519PublicKey.from_public_bytes(public_raw).verify(signature, payload)
+            valid = True
+        except (InvalidSignature, ValueError):
+            valid = False
+    return OfflineLicenseFile(claims=claims, signature_valid=valid)
