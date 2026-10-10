@@ -1,5 +1,9 @@
 """
-Endpoints NGCorion talks to: activate, validate, heartbeat, consume.
+Endpoints NGCorion talks to: activate, validate, heartbeat.
+
+The entitlement is the asset limit (plan + add-on packs, app/plans.py), which
+NGCorion enforces itself from the signed answer. There is no per-operation
+quota any more, so no /consume: audits and hardening runs are not counted.
 
 Every answer carries `signed_token`, the same answer signed with the server's
 Ed25519 key (app/utils/license_token.py). NGCorion only acts on a token it can
@@ -9,14 +13,14 @@ a clear 503 is easier to diagnose than a product that silently stays locked.
 """
 import logging
 from datetime import datetime, timezone
-from typing import Optional, Union
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from .. import crud, schemas
 from ..database import get_db
-from ..utils.license_token import SigningKeyMissing, TokenSigner, build_claims, get_signer
+from ..utils.license_token import SigningKeyMissing, TokenSigner, build_claims, get_signer, limits_of
 from ..utils.signing import verify_signature
 
 logger = logging.getLogger(__name__)
@@ -36,7 +40,7 @@ def require_signer() -> TokenSigner:
 def verify_request_signature(
     x_timestamp: Optional[str] = Header(None),
     x_signature: Optional[str] = Header(None),
-    data: Union[schemas.LicenseValidate, schemas.OperationConsume] = None
+    data: schemas.LicenseValidate = None
 ):
     """Verify the client's HMAC over the request (organization token as the shared secret)."""
     if not x_timestamp or not x_signature:
@@ -48,24 +52,11 @@ def verify_request_signature(
         "vm_fingerprint": data.vm_fingerprint
     }
 
-    # Add operation-specific fields if present
-    if isinstance(data, schemas.OperationConsume):
-        request_data["operation_type"] = data.operation_type
-        request_data["count"] = data.count
-
     # Use organization_token as the shared secret
     if not verify_signature(request_data, x_signature, x_timestamp, data.organization_token):
         raise HTTPException(status_code=401, detail="Invalid signature")
 
     return True
-
-
-def _limits(license):
-    return {"max_audits": license.max_audits, "max_hardens": license.max_hardens}
-
-
-def _usage(license):
-    return {"used_audits": license.used_audits, "used_hardens": license.used_hardens}
 
 
 def _signed_response(signer: TokenSigner, typ: str, data, valid: bool, message: str, license=None,
@@ -80,12 +71,12 @@ def _signed_response(signer: TokenSigner, typ: str, data, valid: bool, message: 
     return schemas.ValidationResponse(
         valid=True,
         message=message,
-        plan_type=license.plan_type,
+        plan_code=license.plan_code,
+        plan_name=license.plan_name,
         is_pilot_mode=license.is_pilot_mode,
         organization_token=organization_token,
         expires_at=license.expires_at,
-        limits=_limits(license),
-        usage=_usage(license),
+        limits=limits_of(license),
         signed_token=token,
     )
 
@@ -140,13 +131,16 @@ def validate_license(
 
 
 @router.post("/heartbeat", response_model=schemas.HeartbeatResponse)
-def heartbeat(data: schemas.LicenseValidate, db: Session = Depends(get_db),
+def heartbeat(data: schemas.LicenseHeartbeat, db: Session = Depends(get_db),
               signer: TokenSigner = Depends(require_signer)):
-    """Liveness ping from the client (hourly). A rejection is HTTP 400; success carries a signed
-    token with the license's current state and whether it was just downgraded.
+    """Liveness ping from the client (hourly), with the number of assets it manages. A rejection
+    is HTTP 400; success carries a signed token with the license's current state.
+
+    Each signed answer is also what keeps NGCorion on its plan: after 48 hours without one it
+    falls back to the pilot entitlement (5 assets) until it gets one again.
     """
-    success, message, should_downgrade = crud.heartbeat(
-        db, data.license_key, data.organization_token, data.vm_fingerprint
+    success, message = crud.heartbeat(
+        db, data.license_key, data.organization_token, data.vm_fingerprint, data.asset_count
     )
 
     if not success:
@@ -158,38 +152,6 @@ def heartbeat(data: schemas.LicenseValidate, db: Session = Depends(get_db),
     usable = bool(license and license.is_active and license.expires_at > datetime.now(timezone.utc))
     token = signer.sign(build_claims(
         "heartbeat", license_key=data.license_key, vm_fingerprint=data.vm_fingerprint,
-        valid=usable, message=message, nonce=data.nonce,
-        license=license, extra={"down": bool(should_downgrade)},
+        valid=usable, message=message, nonce=data.nonce, license=license,
     ))
-    return schemas.HeartbeatResponse(
-        success=True,
-        message=message,
-        should_downgrade=should_downgrade,
-        signed_token=token,
-    )
-
-
-@router.post("/consume", response_model=schemas.ValidationResponse)
-def consume_operation(
-    data: schemas.OperationConsume,
-    db: Session = Depends(get_db),
-    x_timestamp: Optional[str] = Header(None),
-    x_signature: Optional[str] = Header(None),
-    signer: TokenSigner = Depends(require_signer),
-):
-    """Use quota for one or more audits or hardening runs. Requires the client's HMAC. A refusal
-    (quota used up, invalid license) is HTTP 400; success carries a signed token with the new usage,
-    the operation and the count, which the client checks before it lets the operation count.
-    """
-    verify_request_signature(x_timestamp, x_signature, data)
-
-    success, message, license = crud.consume_operation(
-        db, data.license_key, data.organization_token, data.vm_fingerprint,
-        data.operation_type, data.count
-    )
-
-    if not success:
-        raise HTTPException(status_code=400, detail=message)
-
-    return _signed_response(signer, "consume", data, True, message, license,
-                            extra={"op": data.operation_type, "count": data.count})
+    return schemas.HeartbeatResponse(success=True, message=message, signed_token=token)

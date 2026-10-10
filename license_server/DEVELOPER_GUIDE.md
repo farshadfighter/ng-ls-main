@@ -1,5 +1,13 @@
 # Developer Guide: License Management
 
+> **Licensing v3 (asset-based plans).** Plans are now SKUs with an asset
+> limit plus 50-asset add-on packs; audits and hardening runs are no longer
+> counted, `/api/licenses/consume`, `plan_type` and the `max_/used_audits|hardens`
+> fields are gone, and the server no longer downgrades a license that was
+> offline (NGCorion falls back to the pilot on its own, reversibly). See
+> `LICENSE_PLANS_SUMMARY.md`. Where this document still describes quotas,
+> `/consume` or `plan_type`, it describes the earlier version.
+
 > **Note on the `client` package.** The standalone SDK that used to live in
 > `license_server/client/` (`from client import LicenseClient, HeartbeatService`)
 > has been removed — it was an unmaintained duplicate of the client the product
@@ -10,8 +18,8 @@
 
 ## Signed licensing answers (read this first)
 
-Every answer of `/api/licenses/activate`, `/validate`, `/heartbeat` and
-`/consume` carries `signed_token`: the answer signed with the Ed25519 key in
+Every answer of `/api/licenses/activate`, `/validate` and `/heartbeat`
+carries `signed_token`: the answer signed with the Ed25519 key in
 `LICENSE_SIGNING_PRIVATE_KEY` (`app/utils/license_token.py`). NGCorion has the
 public half built in (`app/core/license_keys.py`) and acts only on a token it
 can verify, whose nonce matches its request and whose fingerprint is its own

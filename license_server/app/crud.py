@@ -1,12 +1,13 @@
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from . import models, schemas
+from . import models, plans, schemas
 from .core.portal_events import LicenseEvent, build_event_payload, notifier
 from datetime import datetime, timedelta, timezone
 import logging
 import secrets
 import string
 import hashlib
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -20,21 +21,21 @@ logger = logging.getLogger(__name__)
 # Which transitions emit, and which deliberately do not:
 #
 #   created  create_license, create_license_from_portal
-#   updated  activate_license (first bind), downgrade_to_pilot (plan change)
+#   updated  activate_license (first bind), reset_binding, change_plan
 #   revoked  deactivate_license, delete_license
 #   expired  the sweep in portal_events.py, not this module
 #
-#   heartbeat()          no event. A daily liveness ping per license that
-#                        changes only last_heartbeat_at — none of which is in
-#                        the payload. It would be pure volume.
-#   consume_operation()  no event. It moves used_audits/used_hardens, and the
-#                        event payload the integration defines carries neither,
-#                        so the portal would receive a message identical to the
-#                        previous one. Add usage fields to the payload first if
-#                        the portal wants to track consumption.
-#   validate_license()   no event for the success path (it only touches
-#                        last_validated_at). Its downgrade path does emit, via
-#                        downgrade_to_pilot.
+#   heartbeat()          no event. A liveness ping per license that changes
+#                        only last_heartbeat_at and the reported asset count —
+#                        none of which is in the payload. It would be pure volume.
+#   validate_license()   no event (it only touches last_validated_at).
+#
+# Nothing here changes a license because its machine was offline. NGCorion
+# falls back to the pilot entitlement by itself after 48 hours without a
+# signed answer, and returns to the license's own plan when it reaches this
+# server again; an offline period never costs the customer the plan they paid
+# for. (Up to licensing v2, validate and heartbeat overwrote the plan with the
+# pilot plan for good.)
 
 def generate_license_key() -> str:
     """generate license key: XXXX-XXXX-XXXX-XXXX"""
@@ -47,59 +48,32 @@ def generate_organization_token(org_name: str, customer_email: str) -> str:
     unique_string = f"{org_name}:{customer_email}:{secrets.token_hex(16)}"
     return hashlib.sha256(unique_string.encode()).hexdigest()
 
-def get_plan_limits(plan_type: models.PlanType) -> dict:
-    """each plan limit
+def plan_fields(plan_code: str, addon_packs: int = 0) -> dict:
+    """The License columns a plan sets: plan_code, max_assets, addon_packs.
 
-    Asset Management has no license entitlement — only audit and hardening
-    operations are quota-gated.
+    plans.UnknownPlan / plans.InvalidAddons (both ValueError) for a plan this
+    server does not sell or add-ons that plan cannot take.
     """
-    limits = {
-        models.PlanType.PILOT: {
-            "max_audits": 2,
-            "max_hardens": 2,
-            "duration_days": 30
-        },
-        models.PlanType.PLAN_100: {
-            "max_audits": 100,
-            "max_hardens": 100,
-            "duration_days": 365
-        },
-        models.PlanType.PLAN_250: {
-            "max_audits": 250,
-            "max_hardens": 250,
-            "duration_days": 365
-        },
-        models.PlanType.PLAN_500: {
-            "max_audits": 500,
-            "max_hardens": 500,
-            "duration_days": 365
-        },
-        models.PlanType.UNLIMITED: {
-            "max_audits": None,
-            "max_hardens": None,
-            "duration_days": 365
-        }
-    }
-    return limits.get(plan_type, limits[models.PlanType.PILOT])
+    plan = plans.resolve(plan_code)
+    packs = plans.check_addons(plan, addon_packs)
+    return {"plan_code": plan.code, "max_assets": plan.max_assets(packs), "addon_packs": packs}
 
 def create_license(db: Session, license_data: schemas.LicenseCreate) -> models.License:
     license_key = generate_license_key()
     org_token = generate_organization_token(license_data.organization_name, license_data.customer_email)
-    
-    limits = get_plan_limits(license_data.plan_type)
-    expires_at = datetime.now(timezone.utc) + timedelta(days=limits["duration_days"])
-    
+
+    plan = plans.resolve(license_data.plan_code)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=plan.duration_days)
+
     db_license = models.License(
         license_key=license_key,
         organization_token=org_token,
         customer_name=license_data.customer_name,
         customer_email=license_data.customer_email,
         organization_name=license_data.organization_name,
-        plan_type=license_data.plan_type,
-        max_audits=limits["max_audits"],
-        max_hardens=limits["max_hardens"],
+        **plan_fields(plan.code, license_data.addon_packs),
         expires_at=expires_at,
-        is_pilot_mode=(license_data.plan_type == models.PlanType.PILOT),
+        is_pilot_mode=plan.pilot,
         # Optional portal linkage, chosen by the admin from the phase-4 cache.
         # source stays at its 'manual' default: a person created this, so it
         # falls outside the portal's idempotency index on order_id.
@@ -236,94 +210,61 @@ def validate_license(db: Session, license_key: str, org_token: str, vm_fingerpri
     
     if license.vm_fingerprint != vm_fingerprint:
         return False, "VM fingerprint is not match", None
-    
-    # چک heartbeat - اگر بیش از 48 ساعت قطع بود
-    if license.last_heartbeat_at:
-        time_since_last = datetime.now(timezone.utc) - license.last_heartbeat_at
-        if time_since_last > timedelta(hours=48):
-            # تبدیل به Pilot
-            downgrade_to_pilot(db, license)
-            return False, "لایسنس به دلیل قطع ارتباط به حالت Pilot تبدیل شد", license
-    
+
     license.last_validated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(license)
     
     return True, "license is valid", license
 
-def heartbeat(db: Session, license_key: str, org_token: str, vm_fingerprint: str) -> tuple[bool, str, bool]:
-    """چک روزانه - باید هر روز صدا زده شود"""
+def heartbeat(db: Session, license_key: str, org_token: str, vm_fingerprint: str,
+              asset_count: Optional[int] = None) -> tuple[bool, str]:
+    """Liveness ping from the licensed machine, with how many assets it manages.
+
+    Only authenticates the caller and records the contact; whether the license
+    is still usable is the router's call for the signed answer.
+    """
     license = get_license_by_key(db, license_key)
-    
+
     if not license:
-        return False, "license key has not found", False
-    
+        return False, "license key has not found"
+
     if license.organization_token != org_token or license.vm_fingerprint != vm_fingerprint:
-        return False, "faild to authintication", False
-    
-    # چک آیا باید downgrade شود
-    should_downgrade = False
-    if license.last_heartbeat_at:
-        time_since_last = datetime.now(timezone.utc) - license.last_heartbeat_at
-        if time_since_last > timedelta(hours=48):
-            downgrade_to_pilot(db, license)
-            should_downgrade = True
-    
-    license.last_heartbeat_at = datetime.now(timezone.utc)
+        return False, "faild to authintication"
+
+    now = datetime.now(timezone.utc)
+    license.last_heartbeat_at = now
+    if asset_count is not None:
+        license.reported_assets = asset_count
+        license.reported_assets_at = now
     db.commit()
     db.refresh(license)
-    
-    return True, "Heartbeat is ok", should_downgrade
 
-def downgrade_to_pilot(db: Session, license: models.License):
-    """convert license to Pilot"""
-    pilot_limits = get_plan_limits(models.PlanType.PILOT)
-    
-    license.is_pilot_mode = True
-    license.plan_type = models.PlanType.PILOT
-    license.max_audits = pilot_limits["max_audits"]
-    license.max_hardens = pilot_limits["max_hardens"]
+    return True, "Heartbeat is ok"
 
+def change_plan(db: Session, license_key: str, plan_code: Optional[str] = None,
+                addon_packs: Optional[int] = None) -> Optional[models.License]:
+    """Move a license to another plan and/or another number of add-on packs (an upgrade, add-ons
+    bought later, or correcting a license the old server downgraded). The term is unchanged.
+    None when the key is unknown; plans.UnknownPlan / InvalidAddons for an impossible change.
+    """
+    license = get_license_by_key(db, license_key)
+    if license is None:
+        return None
+    code = plan_code or license.plan_code
+    plan = plans.resolve(code)
+    # Moving to a plan without add-ons drops the packs unless new ones are given.
+    if addon_packs is None:
+        addon_packs = license.addon_packs if plan.addons_allowed else 0
+    fields = plan_fields(plan.code, addon_packs)
+    for name, value in fields.items():
+        setattr(license, name, value)
+    if plan_code is not None:
+        license.is_pilot_mode = plan.pilot
     db.commit()
-
-    # Emitted here rather than at the two call sites (validate_license and
-    # heartbeat), so the event cannot be forgotten if a third caller appears.
-    # This one genuinely changes the payload: plan_type and is_pilot_mode.
+    db.refresh(license)
     notifier.notify(LicenseEvent.UPDATED, license)
-
-def consume_operation(db: Session, license_key: str, org_token: str, vm_fingerprint: str,
-                     operation_type: str, count: int) -> tuple[bool, str, models.License]:
-    """مصرف عملیات (audit, harden)"""
-
-    valid, message, license = validate_license(db, license_key, org_token, vm_fingerprint)
-
-    if not valid:
-        return False, message, None
-
-    operation_map = {
-        "audit": ("max_audits", "used_audits"),
-        "harden": ("max_hardens", "used_hardens"),
-    }
-    
-    if operation_type not in operation_map:
-        return False, "Operation is invalid", None
-    
-    max_field, used_field = operation_map[operation_type]
-    max_value = getattr(license, max_field)
-    used_value = getattr(license, used_field)
-
-    # چک محدودیت (None = نامحدود)
-    # Only enforce the ceiling for capped plans. The usage counter is always
-    # incremented — including the Unlimited plan, where max_value is None —
-    # so the frontend can report real usage instead of a frozen 0.
-    if max_value is not None and used_value + count > max_value:
-        return False, f"limit {operation_type} has expierd", license
-
-    setattr(license, used_field, used_value + count)
-    db.commit()
-    db.refresh(license)
-
-    return True, "operation successfully", license
+    return license
 
 def get_all_licenses(db: Session, skip: int = 0, limit: int = 100):
     return db.query(models.License).offset(skip).limit(limit).all()
@@ -377,14 +318,13 @@ def create_license_from_portal(
          two concurrent calls that both passed step 1 — the loser gets an
          IntegrityError and re-reads the winner's row.
 
-    Differs from create_license (the admin path) in three ways:
+    Differs from create_license (the admin path) in two ways:
       * expires_at honours data.duration_days when the portal sends one,
         because the order decides the term, not the plan catalog;
       * is_pilot_mode is taken from the portal when set, instead of being
-        derived from plan_type == PILOT;
-      * max_audits/max_hardens still come from get_plan_limits — the portal
-        body carries no quota fields, so the plan stays authoritative for
-        entitlements even when it is not authoritative for duration.
+        derived from the plan.
+    The asset limit always comes from the catalog (plan + add-on packs): the
+    portal names what was bought, not what it entitles.
     """
     existing = get_license_by_order_id(db, data.order_id)
     if existing is not None:
@@ -395,14 +335,10 @@ def create_license_from_portal(
         )
         return existing, False
 
-    limits = get_plan_limits(data.plan_type)
-    duration_days = data.duration_days if data.duration_days is not None else limits["duration_days"]
+    plan = plans.resolve(data.plan_code)
+    duration_days = data.duration_days if data.duration_days is not None else plan.duration_days
 
-    is_pilot_mode = (
-        data.is_pilot_mode
-        if data.is_pilot_mode is not None
-        else (data.plan_type == models.PlanType.PILOT)
-    )
+    is_pilot_mode = data.is_pilot_mode if data.is_pilot_mode is not None else plan.pilot
 
     now = datetime.now(timezone.utc)
     db_license = models.License(
@@ -413,9 +349,7 @@ def create_license_from_portal(
         customer_name=data.customer_name,
         customer_email=data.customer_email,
         organization_name=data.organization_name,
-        plan_type=data.plan_type,
-        max_audits=limits["max_audits"],
-        max_hardens=limits["max_hardens"],
+        **plan_fields(plan.code, data.addon_packs),
         expires_at=now + timedelta(days=duration_days),
         is_pilot_mode=is_pilot_mode,
         # Portal provenance
@@ -453,7 +387,7 @@ def create_license_from_portal(
         db_license.id,
         data.order_id,
         data.order_number,
-        data.plan_type.value,
+        db_license.plan_code,
     )
 
     # Only on a real creation. An idempotent replay returns above without

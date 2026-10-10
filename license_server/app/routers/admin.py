@@ -4,7 +4,7 @@ import requests
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from typing import List
-from .. import crud, schemas
+from .. import crud, plans, schemas
 from ..core.security import get_current_admin, create_access_token, verify_admin_credentials
 from ..core.config import settings
 from ..database import get_db
@@ -70,6 +70,11 @@ def login(credentials: LoginRequest, request: Request):
         expires_delta=timedelta(hours=settings.JWT_EXPIRE_HOURS)
     )
     return TokenResponse(access_token=access_token, token_type="bearer")
+
+@router.get("/plans")
+def list_plans(admin: str = Depends(get_current_admin)):
+    """The plan catalog (app/plans.py): SKUs, names, base asset limits, terms, and the add-on."""
+    return plans.catalog()
 
 @router.post("/licenses", response_model=schemas.LicenseResponse)
 def create_license(
@@ -140,4 +145,28 @@ def reset_license_binding(
     if license is None:
         raise HTTPException(status_code=404, detail="License not found")
     logger.info("[Admin] %s released license %s from its machine", admin, license_key)
+    return license
+
+
+@router.post("/licenses/{license_key}/plan", response_model=schemas.LicenseResponse)
+def change_license_plan(
+    license_key: str,
+    change: schemas.PlanChange,
+    db: Session = Depends(get_db),
+    admin: str = Depends(get_current_admin)
+):
+    """Change a license's plan and/or its add-on packs (an upgrade, add-ons bought later, or
+    correcting a license the old server downgraded for being offline). The term stays. NGCorion
+    picks the new limit up with its next validation or heartbeat.
+    """
+    if change.plan_code is None and change.addon_packs is None:
+        raise HTTPException(status_code=422, detail="Give a plan_code, addon_packs, or both")
+    try:
+        license = crud.change_plan(db, license_key, change.plan_code, change.addon_packs)
+    except ValueError as exc:   # plans.UnknownPlan / InvalidAddons
+        raise HTTPException(status_code=422, detail=str(exc))
+    if license is None:
+        raise HTTPException(status_code=404, detail="License not found")
+    logger.info("[Admin] %s set license %s to %s with %s add-on pack(s)",
+                admin, license_key, license.plan_code, license.addon_packs)
     return license

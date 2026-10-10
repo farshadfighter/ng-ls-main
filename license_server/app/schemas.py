@@ -1,14 +1,39 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
-from .models import PlanType
+from . import plans
 
-class LicenseCreate(BaseModel):
+
+def _plan_code(value: str) -> str:
+    """A SKU (or legacy plan name) as its canonical SKU; ValueError (a 422) when unknown."""
+    return plans.resolve(value).code
+
+
+class _PlanChoice(BaseModel):
+    """plan_code + addon_packs, checked against the catalog (app/plans.py)."""
+
+    # A SKU such as "NGC-BUS-250-1Y" (any case). The plan names of the old
+    # catalog ("plan_250") are accepted too and mean the plan with that number.
+    plan_code: str
+    # 50-asset add-on packs (NGC-ADD-50-1Y). Not for the pilot or Unlimited.
+    addon_packs: int = Field(default=0, ge=0, le=plans.MAX_ADDON_PACKS)
+
+    @field_validator("plan_code")
+    @classmethod
+    def _known_plan(cls, value: str) -> str:
+        return _plan_code(value)
+
+    @model_validator(mode="after")
+    def _addons_fit_the_plan(self):
+        plans.check_addons(plans.resolve(self.plan_code), self.addon_packs)
+        return self
+
+
+class LicenseCreate(_PlanChoice):
     customer_name: str
     customer_email: EmailStr
     organization_name: str
-    plan_type: PlanType
 
     # Optional link to the portal user and order this license was sold under,
     # for a license an admin creates by hand. The admin UI finds these through
@@ -42,15 +67,22 @@ class LicenseValidate(BaseModel):
     # token so a recorded answer cannot be replayed to the client later.
     nonce: Optional[str] = Field(default=None, max_length=128)
 
-class OperationConsume(BaseModel):
-    license_key: str
-    organization_token: str
-    vm_fingerprint: str
-    operation_type: str  # "audit" or "harden" — Asset Management is not license-gated
-    count: int = 1
-    # Random value the client picks per request; echoed inside the signed
-    # token so a recorded answer cannot be replayed to the client later.
-    nonce: Optional[str] = Field(default=None, max_length=128)
+class LicenseHeartbeat(LicenseValidate):
+    # How many assets the licensed machine manages now. Recorded for the
+    # admin (licenses.reported_assets); older clients do not send it.
+    asset_count: Optional[int] = Field(default=None, ge=0, le=10_000_000)
+
+
+class PlanChange(BaseModel):
+    """Body of POST /api/admin/licenses/{key}/plan. Either field may be left out."""
+
+    plan_code: Optional[str] = None
+    addon_packs: Optional[int] = Field(default=None, ge=0, le=plans.MAX_ADDON_PACKS)
+
+    @field_validator("plan_code")
+    @classmethod
+    def _known_plan(cls, value: Optional[str]) -> Optional[str]:
+        return None if value is None else _plan_code(value)
 
 class LicenseResponse(BaseModel):
     id: int
@@ -59,13 +91,15 @@ class LicenseResponse(BaseModel):
     customer_name: str
     customer_email: str
     organization_name: str
-    plan_type: PlanType
 
-    max_audits: Optional[int]
-    max_hardens: Optional[int]
-
-    used_audits: int
-    used_hardens: int
+    plan_code: str
+    plan_name: str
+    # None = unlimited. plan base + 50 per add-on pack.
+    max_assets: Optional[int]
+    addon_packs: int
+    # What the licensed machine last reported (heartbeat); None until it has.
+    reported_assets: Optional[int]
+    reported_assets_at: Optional[datetime]
 
     vm_fingerprint: Optional[str]
     is_active: bool
@@ -83,10 +117,11 @@ class LicenseResponse(BaseModel):
 class ValidationResponse(BaseModel):
     valid: bool
     message: str
-    plan_type: Optional[PlanType] = None
+    plan_code: Optional[str] = None
+    plan_name: Optional[str] = None
     is_pilot_mode: bool = False
+    # {"max_assets": N or None, "addon_packs": k}
     limits: Optional[dict] = None
-    usage: Optional[dict] = None
     organization_token: Optional[str] = None
     expires_at: Optional[datetime] = None
     # The same answer signed with LICENSE_SIGNING_PRIVATE_KEY (see
@@ -97,7 +132,6 @@ class ValidationResponse(BaseModel):
 class HeartbeatResponse(BaseModel):
     success: bool
     message: str
-    should_downgrade: bool = False
     # The same answer signed with LICENSE_SIGNING_PRIVATE_KEY (see
     # app/utils/license_token.py). NGCorion acts only on this token; the plain
     # fields above stay for older clients and for humans reading the response.
@@ -113,38 +147,46 @@ class FingerprintResponse(BaseModel):
 class PortalLicenseCreate(BaseModel):
     """Body of POST /internal/portal/licenses.
 
-    Note on plan_type: PlanType is a str-Enum whose *values* are lowercase
-    ("pilot", "plan_100", "plan_250", "plan_500", "unlimited"), and pydantic
-    coerces by value — so the portal must send "plan_100", not "PLAN_100".
-    (The Postgres column stores the upper-case member NAME, because
-    SQLAlchemy's Enum persists names unless values_callable is given and this
-    project does not set it; see alembic/versions/002_migrate_legacy_plan_types.py.
-    That is an internal detail and not what crosses the wire.) An unknown plan
-    is a 422 rather than a license created on a guessed plan.
+    The plan is ``plan_code``, a SKU of the catalog (app/plans.py, e.g.
+    "NGC-ENT-500-1Y"), plus ``addon_packs`` 50-asset add-ons. A portal still
+    on the old vocabulary may send ``plan_type`` ("plan_250") instead, which
+    means the plan with that number. An unknown plan, or add-ons the plan
+    cannot take, is a 422 rather than a license created on a guess.
     """
 
     user_uuid7: UUID
     order_id: int
     order_number: str = Field(max_length=64)
-    plan_type: PlanType
+    plan_code: Optional[str] = None
+    plan_type: Optional[str] = None   # legacy name of plan_code
+    addon_packs: int = Field(default=0, ge=0, le=plans.MAX_ADDON_PACKS)
 
     customer_name: str = Field(min_length=1, max_length=255)
     customer_email: EmailStr
     organization_name: str = Field(min_length=1, max_length=255)
 
-    # Overrides the plan catalog's duration (crud.get_plan_limits) when given,
+    # Overrides the plan catalog's duration (app/plans.py) when given,
     # because the portal's order — not this server's price list — decides how
     # long the customer paid for. Omitted means "use the plan's own duration".
     # Bounded at 10 years: a typo of 36500 instead of 365 should be a 422, not
     # a license that outlives the company.
     duration_days: Optional[int] = Field(default=None, gt=0, le=3650)
 
-    # Likewise explicit rather than derived from plan_type == PILOT, so the
+    # Likewise explicit rather than derived from the plan (pilot or not), so the
     # portal can sell a trial on a non-pilot plan. None means "derive it".
     is_pilot_mode: Optional[bool] = None
 
     # Opaque portal payload, stored verbatim in licenses.portal_meta.
     meta: Optional[dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def _one_known_plan(self):
+        if bool(self.plan_code) == bool(self.plan_type):
+            raise ValueError("send exactly one of plan_code and plan_type")
+        self.plan_code = _plan_code(self.plan_code or self.plan_type)
+        self.plan_type = None
+        plans.check_addons(plans.resolve(self.plan_code), self.addon_packs)
+        return self
 
 
 class PortalLicenseResponse(BaseModel):
@@ -165,7 +207,7 @@ class PortalLicenseStatus(BaseModel):
     """Response of GET /internal/portal/licenses/{license_id}.
 
     Deliberately wider than PortalLicenseResponse: this is the portal's view
-    of a license's current state, so it carries activation, quota usage and
+    of a license's current state, so it carries activation, asset limit and
     heartbeat freshness, which is what a portal-side status page needs.
 
     organization_token is NOT included. It is the shared secret the licensed
@@ -174,7 +216,8 @@ class PortalLicenseStatus(BaseModel):
 
     license_id: int
     license_key: str
-    plan_type: PlanType
+    plan_code: str
+    plan_name: str
     is_active: bool
     is_pilot_mode: bool
 
@@ -194,11 +237,12 @@ class PortalLicenseStatus(BaseModel):
     last_heartbeat_at: Optional[datetime]
     portal_synced_at: Optional[datetime]
 
-    # None on either field means unlimited for that operation.
-    max_audits: Optional[int]
-    max_hardens: Optional[int]
-    used_audits: int
-    used_hardens: int
+    # None means unlimited. reported_* is what the licensed machine last said
+    # it manages.
+    max_assets: Optional[int]
+    addon_packs: int
+    reported_assets: Optional[int]
+    reported_assets_at: Optional[datetime]
 
     # Whether the license has been bound to a machine yet, without exposing
     # the fingerprint hash itself.
@@ -237,10 +281,10 @@ class PortalUserCacheResponse(BaseModel):
 class PortalOrderCacheResponse(BaseModel):
     """A cached portal order. ``raw`` is withheld, as for users.
 
-    ``plan_type`` is the PORTAL's plan string, not this server's PlanType — an
+    ``plan_type`` is the PORTAL's plan string, not a checked plan code — an
     order may name a plan this server does not sell, and the admin still needs
-    to see it. Mapping it to a PlanType is the admin's decision when they fill
-    in the license form.
+    to see it. Mapping it to a plan is the admin's decision when they fill in
+    the license form.
     """
 
     order_id: int

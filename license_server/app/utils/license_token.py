@@ -2,7 +2,7 @@
 Signed license tokens.
 
 Every licensing answer this server gives NGCorion (activate, validate,
-heartbeat, consume) carries a token signed with the server's Ed25519 private
+heartbeat) carries a token signed with the server's Ed25519 private
 key. NGCorion has the matching public key built into its code and acts only on
 what a valid token says, so a look-alike server - anything that merely answers
 {"valid": true} - can no longer unlock the product: without the private key it
@@ -13,8 +13,8 @@ Format (deliberately small, no JWT library on either side):
     base64url(claims JSON) "." base64url(Ed25519 signature over those bytes)
 
 Claims (see build_claims): token version, key id, type of answer, license key,
-machine fingerprint, verdict and message, plan, limits, usage, license expiry,
-issue time, and the nonce the client sent with its request so a recorded
+machine fingerprint, verdict and message, plan (code and name), the asset limit
+and add-on packs, license expiry, issue time, and the nonce the client sent with its request so a recorded
 answer cannot be replayed to it later.
 
 The private key comes from LICENSE_SIGNING_PRIVATE_KEY (base64 of the 32-byte
@@ -107,6 +107,11 @@ def get_signer() -> TokenSigner:
     return _signer_for(value)
 
 
+def limits_of(license) -> Dict[str, Any]:
+    """What a license entitles, as the signed answers carry it."""
+    return {"max_assets": license.max_assets, "addon_packs": license.addon_packs or 0}
+
+
 def build_claims(
     typ: str,
     *,
@@ -119,7 +124,10 @@ def build_claims(
     extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """The claim set of one answer. `license` (a models.License, or None when the key is unknown)
-    supplies plan, limits, usage and expiry; the verdict is always the caller's.
+    supplies plan, limits and expiry; the verdict is always the caller's.
+
+    limits = {"max_assets": N or None (unlimited), "addon_packs": k}. Before licensing v3 they
+    were audit/hardening quotas (max_audits/max_hardens) with a usage object alongside.
     """
     claims: Dict[str, Any] = {
         "typ": typ,
@@ -130,18 +138,17 @@ def build_claims(
         "nonce": nonce,
         "iat": int(time.time()),
         "plan": None,
+        "plan_name": None,
         "pilot": False,
         "limits": None,
-        "usage": None,
         "exp": None,
     }
     if license is not None:
-        plan = getattr(license.plan_type, "value", license.plan_type)
         claims.update({
-            "plan": plan,
+            "plan": license.plan_code,
+            "plan_name": license.plan_name,
             "pilot": bool(license.is_pilot_mode),
-            "limits": {"max_audits": license.max_audits, "max_hardens": license.max_hardens},
-            "usage": {"used_audits": license.used_audits, "used_hardens": license.used_hardens},
+            "limits": limits_of(license),
             "exp": int(license.expires_at.timestamp()) if license.expires_at else None,
         })
     if extra:

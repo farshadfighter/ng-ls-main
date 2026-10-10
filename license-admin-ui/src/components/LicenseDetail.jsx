@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { revokeLicense, deleteLicense, resetBinding } from "../api/client.js";
-import { planLabel } from "../lib/plans.js";
+import { revokeLicense, deleteLicense, resetBinding, changePlan } from "../api/client.js";
+import { ADDON, PLANS, PLAN_BY_CODE, fmtAssets, licensePlanLabel, maxAssets, planLabel } from "../lib/plans.js";
 import { fmtDate, relativeTime, isExpired } from "../lib/format.js";
 import UsageBars from "./UsageBars.jsx";
 import StatusBadge from "./StatusBadge.jsx";
@@ -88,7 +88,7 @@ export default function LicenseDetail({ license, onClose, onRevoked, onDeleted, 
 
           <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
             <StatusBadge license={license} />
-            <span className="badge plan">{planLabel(license.plan_type)}</span>
+            <span className="badge plan">{licensePlanLabel(license)}</span>
             {license.is_pilot_mode && <span className="badge pilot">Pilot mode</span>}
           </div>
 
@@ -96,8 +96,10 @@ export default function LicenseDetail({ license, onClose, onRevoked, onDeleted, 
           <div style={{ height: 10 }} />
           <CopyRow label="Org Token" value={license.organization_token} />
 
-          <h4 style={{ margin: "22px 0 12px" }}>Usage</h4>
+          <h4 style={{ margin: "22px 0 12px" }}>Assets</h4>
           <UsageBars license={license} />
+
+          <PlanEditor license={license} onUpdated={onUpdated} />
 
           <h4 style={{ margin: "22px 0 10px" }}>Details</h4>
           <dl className="kv">
@@ -163,6 +165,79 @@ export default function LicenseDetail({ license, onClose, onRevoked, onDeleted, 
             {deleting ? "Deleting…" : "Delete"}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Upgrade, add-ons bought later, or putting back the plan of a license the old
+// server downgraded for being offline. NGCorion receives the new limit with its
+// next validation or heartbeat; the term does not change.
+function PlanEditor({ license, onUpdated }) {
+  const [planCode, setPlanCode] = useState(license.plan_code);
+  const [packs, setPacks] = useState(String(license.addon_packs ?? 0));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const plan = PLAN_BY_CODE[planCode];
+  const packCount = plan?.addonsAllowed ? Number(packs) : 0;
+  const validPacks = Number.isInteger(packCount) && packCount >= 0 && packCount <= ADDON.maxPacks;
+  const changed = planCode !== license.plan_code || packCount !== (license.addon_packs ?? 0);
+
+  async function save() {
+    if (!window.confirm(
+      `Set ${license.license_key} to ${planLabel(planCode)}` +
+        (packCount ? ` + ${packCount} add-on pack(s)` : "") +
+        ` (asset limit ${fmtAssets(maxAssets(plan, packCount))})?`
+    )) return;
+    setBusy(true);
+    setError("");
+    try {
+      onUpdated?.(await changePlan(license.license_key, { plan_code: planCode, addon_packs: packCount }));
+    } catch (err) {
+      setError(err.message || "Failed to change the plan");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="plan-editor">
+      <h4 style={{ margin: "22px 0 10px" }}>Plan &amp; add-ons</h4>
+      {error && <div className="banner error">{error}</div>}
+      <div className="grid-2">
+        <div className="field">
+          <label htmlFor="edit_plan">Plan</label>
+          <select id="edit_plan" value={planCode} onChange={(e) => setPlanCode(e.target.value)}>
+            {PLANS.map((p) => (
+              <option key={p.code} value={p.code}>
+                {planLabel(p.code)} — {p.code}
+              </option>
+            ))}
+            {!PLAN_BY_CODE[license.plan_code] && (
+              <option value={license.plan_code}>{license.plan_code} (no longer sold)</option>
+            )}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="edit_packs">Add-on packs ({ADDON.assets} assets each)</label>
+          <input
+            id="edit_packs"
+            type="number"
+            min="0"
+            max={ADDON.maxPacks}
+            value={plan?.addonsAllowed ? packs : 0}
+            disabled={!plan?.addonsAllowed}
+            onChange={(e) => setPacks(e.target.value)}
+          />
+        </div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <button className="primary" onClick={save} disabled={!changed || !validPacks || busy}>
+          {busy ? "Saving…" : "Save plan"}
+        </button>
+        <span className="note">
+          New asset limit: <strong>{validPacks ? fmtAssets(maxAssets(plan, packCount)) : "—"}</strong>
+        </span>
       </div>
     </div>
   );

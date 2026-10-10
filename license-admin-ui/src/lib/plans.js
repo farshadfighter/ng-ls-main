@@ -1,58 +1,49 @@
 // Display-only mirror of the backend plan catalog.
 //
-// SOURCE OF TRUTH is the license server: license_server/app/crud.py
-// (get_plan_limits) and license_server/app/models.py (PlanType enum). This file
-// is a hand-copied mirror so the Generate form can preview limits/duration
-// without a round trip. It is NOT shared code — if the backend plans change,
-// update this list to match. Limits of `null` mean unlimited.
+// SOURCE OF TRUTH is the license server: license_server/app/plans.py (also
+// served at GET /api/admin/plans). This file is a hand-copied mirror so the
+// Generate form and the Guide can show the plans without a round trip. If the
+// catalog changes, update this list to match.
 //
-// Asset Management has no license entitlement — only audits and hardens are
-// quota dimensions.
+// A license is sold per number of managed assets. 50-asset add-on packs raise
+// a finite paid plan's limit: limit = base + 50 x packs. `assets: null` means
+// unlimited. Audits and hardening runs are not counted.
+
+export const ADDON = { code: "NGC-ADD-50-1Y", assets: 50, maxPacks: 200 };
 
 export const PLANS = [
-  {
-    value: "pilot",
-    label: "Pilot",
-    blurb: "30-day trial",
-    durationDays: 30,
-    limits: { audits: 2, hardens: 2 },
-  },
-  {
-    value: "plan_100",
-    label: "100 Audit / 100 Hardening",
-    blurb: "Up to 100 audits and 100 hardenings",
-    durationDays: 365,
-    limits: { audits: 100, hardens: 100 },
-  },
-  {
-    value: "plan_250",
-    label: "250 Audit / 250 Hardening",
-    blurb: "Up to 250 audits and 250 hardenings",
-    durationDays: 365,
-    limits: { audits: 250, hardens: 250 },
-  },
-  {
-    value: "plan_500",
-    label: "500 Audit / 500 Hardening",
-    blurb: "Up to 500 audits and 500 hardenings",
-    durationDays: 365,
-    limits: { audits: 500, hardens: 500 },
-  },
-  {
-    value: "unlimited",
-    label: "Unlimited",
-    blurb: "Unlimited audits and hardenings",
-    durationDays: 365,
-    limits: { audits: null, hardens: null },
-  },
-];
+  { code: "NGC-PILOT-5-1M", name: "NGCorion Pilot", assets: 5, durationDays: 30, pilot: true },
+  { code: "NGC-ESS-25-1Y", name: "NGCorion Essential", assets: 25, durationDays: 365 },
+  { code: "NGC-PRO-100-1Y", name: "NGCorion Professional", assets: 100, durationDays: 365 },
+  { code: "NGC-BUS-250-1Y", name: "NGCorion Business", assets: 250, durationDays: 365 },
+  { code: "NGC-ENT-500-1Y", name: "NGCorion Enterprise", assets: 500, durationDays: 365 },
+  { code: "NGC-ENT-1000-1Y", name: "NGCorion Enterprise", assets: 1000, durationDays: 365 },
+  { code: "NGC-ENT-2500-1Y", name: "NGCorion Enterprise", assets: 2500, durationDays: 365 },
+  { code: "NGC-ENT-ULT-1Y", name: "NGCorion Enterprise Unlimited", assets: null, durationDays: 365 },
+].map((p) => ({ ...p, addonsAllowed: p.assets !== null && !p.pilot }));
 
-export const PLAN_BY_VALUE = Object.fromEntries(PLANS.map((p) => [p.value, p]));
+export const PLAN_BY_CODE = Object.fromEntries(PLANS.map((p) => [p.code, p]));
 
-export function planLabel(value) {
-  return PLAN_BY_VALUE[value]?.label || value;
+// The asset limit a plan with `packs` add-ons gives; null = unlimited.
+export function maxAssets(plan, packs = 0) {
+  if (!plan || plan.assets === null) return null;
+  return plan.assets + ADDON.assets * (Number(packs) || 0);
 }
 
-// The two quota dimensions, in display order. Field names match the API
-// LicenseResponse (max_<x> / used_<x>).
-export const OPERATIONS = ["audits", "hardens"];
+export function fmtAssets(n) {
+  return n === null || n === undefined ? "Unlimited" : Number(n).toLocaleString("en-US");
+}
+
+// "NGCorion Business (250)" — the name alone is ambiguous for the three
+// Enterprise sizes.
+export function planLabel(code) {
+  const plan = PLAN_BY_CODE[code];
+  if (!plan) return code || "—";
+  return plan.assets === null || plan.pilot ? plan.name : `${plan.name} ${fmtAssets(plan.assets)}`;
+}
+
+// A license row's plan as a short badge text, add-ons included.
+export function licensePlanLabel(license) {
+  const base = planLabel(license.plan_code);
+  return license.addon_packs ? `${base} + ${license.addon_packs} add-on${license.addon_packs > 1 ? "s" : ""}` : base;
+}

@@ -1,9 +1,11 @@
-import { PLANS } from "../lib/plans.js";
+import { ADDON, PLANS, fmtAssets, planLabel } from "../lib/plans.js";
 
 // Built-in documentation. Content is derived from the actual license server
 // source so it stays accurate:
-//   - app/utils/fingerprint.py  (fingerprint composition)
-//   - app/crud.py               (key/token generation, validation, downgrade)
+//   - NGCorion app/core/machine_fingerprint.py (fingerprint composition)
+//   - app/crud.py               (key/token generation, validation, plan changes)
+//   - app/plans.py              (the plan catalog)
+//   - app/utils/license_token.py (signed answers)
 //   - app/utils/signing.py      (HMAC request signing)
 //   - app/core/security.py      (admin JWT)
 //   - app/models.py             (license fields, plans)
@@ -36,55 +38,38 @@ export default function Guide() {
         <section id="overview" className="guide-section">
           <h2>Overview</h2>
           <p>
-            The license server is a standalone service that issues, validates and tracks usage of
-            licenses for the main application. A license is bound to a single machine (VM) via a
-            hardware fingerprint, signed requests prevent tampering, and a heartbeat keeps the
-            license alive. Each license carries per-operation quotas and an expiry date determined
-            by its plan.
+            The license server issues and validates NGCorion licenses. A license is bound to a
+            single machine via a fingerprint NGCorion computes, every answer is signed with the
+            server's Ed25519 key, and a heartbeat keeps the license current. Each license carries an{" "}
+            <strong>asset limit</strong> (its plan plus add-on packs) and an expiry date.
           </p>
-          <p>A license touches the server at four moments:</p>
+          <p>A license touches the server at three moments:</p>
           <div className="flow">
             <span className="step">Activate (once)</span>
             <span className="arrow">→</span>
             <span className="step">Validate (on app start)</span>
             <span className="arrow">→</span>
-            <span className="step">Heartbeat (hourly)</span>
-            <span className="arrow">→</span>
-            <span className="step">Consume (per operation)</span>
+            <span className="step">Heartbeat (hourly, with the asset count)</span>
           </div>
         </section>
 
         <section id="fingerprint" className="guide-section">
           <h2>Client fingerprint</h2>
           <p>
-            On the client machine the SDK builds a fingerprint from stable hardware/OS identifiers,
-            joins them with <code className="inline-code">|</code>, and takes a SHA-256 hash. Only
-            the resulting hex digest leaves the machine — the raw identifiers never do.
+            NGCorion computes the fingerprint on the licensed machine from identifiers that survive
+            container rebuilds, and sends only a SHA-256 digest — the raw identifiers never leave
+            the machine.
           </p>
           <h3>What is collected</h3>
           <ul>
             <li>
-              <strong>MAC address</strong> — derived from <code className="inline-code">uuid.getnode()</code>{" "}
-              (first non-loopback interface).
+              <strong>Hardware/VM UUID</strong> — DMI <code className="inline-code">product_uuid</code>.
             </li>
             <li>
-              <strong>Machine ID</strong> — <code className="inline-code">/etc/machine-id</code> on Linux,
-              or the <code className="inline-code">MachineGuid</code> registry value on Windows.
-            </li>
-            <li>
-              <strong>Hostname</strong> — <code className="inline-code">platform.node()</code>.
-            </li>
-            <li>
-              <strong>CPU</strong> — <code className="inline-code">platform.processor()</code>.
+              <strong>Host machine ID</strong> — the host's <code className="inline-code">/etc/machine-id</code>,
+              mounted read-only into the container.
             </li>
           </ul>
-          <div className="codeblock">{`components = [
-  "mac:" + mac_address,        # uuid.getnode()
-  "machine:" + machine_id,     # /etc/machine-id | Windows MachineGuid
-  "host:" + hostname,          # platform.node()
-  "cpu:" + cpu,                # platform.processor()
-]
-fingerprint = sha256("|".join(components)).hexdigest()`}</div>
           <p>
             The fingerprint is <strong>locked on first activation</strong>: the server stores it on
             the license, and every later validate/heartbeat must present the same value. A second
@@ -124,27 +109,28 @@ organization_token = sha256(unique).hexdigest()`}</div>
             Sends <code className="inline-code">license_key</code> +{" "}
             <code className="inline-code">vm_fingerprint</code>. The server checks the key exists,
             is active and not expired, binds the fingerprint if unset, and returns the{" "}
-            <code className="inline-code">organization_token</code> and plan limits. Public endpoint
-            (no signature).
+            <code className="inline-code">organization_token</code>, the plan and the asset limit.
+            Public endpoint (the license key is the credential).
           </p>
           <h3>2 · Validate <span className="note">— POST /api/licenses/validate</span></h3>
           <p>
             Sends <code className="inline-code">license_key</code> +{" "}
             <code className="inline-code">organization_token</code> +{" "}
             <code className="inline-code">vm_fingerprint</code>. Confirms the token matches, the
-            license is active, not expired, the fingerprint matches, and the heartbeat hasn't been
-            missed. Accepts an optional HMAC signature; if headers are present they must verify.
+            license is active, not expired, and the fingerprint matches. Accepts an optional HMAC signature; if headers are present they must verify.
           </p>
           <h3>3 · Heartbeat <span className="note">— POST /api/licenses/heartbeat</span></h3>
           <p>
-            A periodic keep-alive. If more than <strong>48 hours</strong> pass without one, the
-            license is automatically <strong>downgraded to Pilot</strong> limits.
+            An hourly keep-alive that also reports how many assets NGCorion manages (shown on the
+            license as <em>reported assets</em>). Its signed answer carries the license's current
+            plan and limit, so a plan change reaches the customer within the hour.
           </p>
-          <h3>4 · Consume <span className="note">— POST /api/licenses/consume</span></h3>
+          <h3>Offline: the pilot fallback</h3>
           <p>
-            Increments a quota counter (asset / discovery / audit / harden / monitor) after checking
-            the limit. <strong>Requires a valid HMAC signature</strong> — only the application
-            backend should call it.
+            When NGCorion has had no signed answer for <strong>48 hours</strong>, it falls back on
+            its own to the pilot entitlement (<strong>5 assets</strong>, for at most 30 days). As
+            soon as it reaches the server again it returns to the license's own plan. The server
+            never changes a license because it was offline.
           </p>
           <h3>Request signing</h3>
           <p>Protected requests are signed with HMAC-SHA256 over a canonical payload:</p>
@@ -184,8 +170,13 @@ X-Signature: <hex signature>`}</div>
               set from the plan duration; expired licenses fail validation.
             </li>
             <li>
-              <strong>Heartbeat downgrade</strong> — missing heartbeats for 48h+ silently drops the
-              license to Pilot limits, preventing indefinite offline use.
+              <strong>Signed answers</strong> — every activate/validate/heartbeat answer is signed
+              (Ed25519) with the client's nonce in it; NGCorion has the public key built in and acts
+              only on what a valid signature says, so a fake server cannot unlock it.
+            </li>
+            <li>
+              <strong>Offline fallback</strong> — after 48h without a signed answer NGCorion drops
+              to the pilot entitlement until it reconnects, preventing indefinite offline use.
             </li>
             <li>
               <strong>Revocation</strong> — revoking sets{" "}
@@ -198,29 +189,32 @@ X-Signature: <hex signature>`}</div>
 
         <section id="plans" className="guide-section">
           <h2>Plans &amp; limits</h2>
-          <p>The plan chosen at creation sets the quotas and validity period:</p>
+          <p>
+            A license is sold per number of managed assets. The plan sets the base limit and the
+            term; <strong>add-on packs</strong> ({ADDON.code}, {ADDON.assets} assets each) raise a
+            finite paid plan's limit. An organisation with 600 assets buys the 500 plan with two
+            add-ons. Audits and hardening runs are not counted.
+          </p>
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
                   <th>Plan</th>
-                  <th>Assets</th>
-                  <th>Discoveries</th>
-                  <th>Audits</th>
-                  <th>Hardens</th>
-                  <th>Monitors</th>
-                  <th>Duration</th>
+                  <th>Code</th>
+                  <th className="num">Assets</th>
+                  <th>Add-ons</th>
+                  <th>Term</th>
                 </tr>
               </thead>
               <tbody>
                 {PLANS.map((p) => (
-                  <tr key={p.value}>
+                  <tr key={p.code}>
                     <td>
-                      <strong>{p.label}</strong>
+                      <strong>{planLabel(p.code)}</strong>
                     </td>
-                    {["assets", "discoveries", "audits", "hardens", "monitors"].map((op) => (
-                      <td key={op}>{p.limits[op] === null ? "∞" : p.limits[op]}</td>
-                    ))}
+                    <td className="mono">{p.code}</td>
+                    <td className="num">{fmtAssets(p.assets)}</td>
+                    <td>{p.addonsAllowed ? "Yes" : "—"}</td>
                     <td>{p.durationDays} days</td>
                   </tr>
                 ))}
@@ -228,8 +222,9 @@ X-Signature: <hex signature>`}</div>
             </table>
           </div>
           <p className="note" style={{ marginTop: 12 }}>
-            Limits mirror the server's plan catalog. The authoritative values live in the license
-            server source.
+            The limit is stored with each license when it is created or changed, so later catalog
+            changes do not alter licenses already sold. The authoritative catalog is{" "}
+            <code className="inline-code">license_server/app/plans.py</code>.
           </p>
         </section>
       </div>

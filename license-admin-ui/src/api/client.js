@@ -119,6 +119,10 @@ export const deleteLicense = (licenseKey) =>
 export const resetBinding = (licenseKey) =>
   api.post(`/api/admin/licenses/${encodeURIComponent(licenseKey)}/reset-binding`, undefined, { auth: true });
 
+// Change a license's plan and/or add-on packs ({plan_code?, addon_packs?}); the term stays.
+export const changePlan = (licenseKey, change) =>
+  api.post(`/api/admin/licenses/${encodeURIComponent(licenseKey)}/plan`, change, { auth: true });
+
 // Public client endpoints (used by the Test panel) — no auth, no signature.
 export const testActivate = (license_key, vm_fingerprint) =>
   api.post("/api/licenses/activate", { license_key, vm_fingerprint });

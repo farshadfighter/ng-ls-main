@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { copyText, downloadBlob } from "../lib/clipboard.js";
-import { planLabel } from "../lib/plans.js";
+import { fmtAssets, licensePlanLabel } from "../lib/plans.js";
 import { fmtDate } from "../lib/format.js";
 
 // Shows the two secrets the customer needs (license_key + organization_token)
@@ -13,7 +13,9 @@ export default function CredentialCard({ license }) {
     customer_name: license.customer_name,
     customer_email: license.customer_email,
     organization_name: license.organization_name,
-    plan_type: license.plan_type,
+    plan_code: license.plan_code,
+    addon_packs: license.addon_packs,
+    max_assets: license.max_assets,
     expires_at: license.expires_at,
   };
 
@@ -29,7 +31,8 @@ export default function CredentialCard({ license }) {
       "===================",
       `Organization : ${license.organization_name}`,
       `Customer     : ${license.customer_name} <${license.customer_email}>`,
-      `Plan         : ${planLabel(license.plan_type)}`,
+      `Plan         : ${licensePlanLabel(license)} (${license.plan_code})`,
+      `Assets       : ${fmtAssets(license.max_assets)}`,
       `Expires      : ${fmtDate(license.expires_at)}`,
       "",
       `License Key        : ${license.license_key}`,
@@ -50,10 +53,11 @@ export default function CredentialCard({ license }) {
     <div className="card">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
         <h2 style={{ margin: 0 }}>Credentials</h2>
-        <span className="badge plan">{planLabel(license.plan_type)}</span>
+        <span className="badge plan">{licensePlanLabel(license)}</span>
       </div>
       <p className="card-sub">
-        For {license.organization_name} · {license.customer_email} · expires {fmtDate(license.expires_at)}
+        For {license.organization_name} · {license.customer_email} · {fmtAssets(license.max_assets)} assets ·
+        expires {fmtDate(license.expires_at)}
       </p>
 
       <div className="banner warn">

@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { createLicense } from "../api/client.js";
-import { PLANS, PLAN_BY_VALUE, OPERATIONS } from "../lib/plans.js";
+import { ADDON, PLANS, PLAN_BY_CODE, fmtAssets, maxAssets, planLabel } from "../lib/plans.js";
 import CredentialCard from "./CredentialCard.jsx";
 
 const EMPTY = {
   customer_name: "",
   customer_email: "",
   organization_name: "",
-  plan_type: "pilot",
+  plan_code: "NGC-PILOT-5-1M",
+  addon_packs: 0,
 };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -19,7 +20,7 @@ export default function GenerateLicense() {
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState(null);
 
-  const plan = PLAN_BY_VALUE[form.plan_type];
+  const plan = PLAN_BY_CODE[form.plan_code];
 
   function set(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
@@ -32,6 +33,9 @@ export default function GenerateLicense() {
     if (!form.organization_name.trim()) e.organization_name = "Required";
     if (!form.customer_email.trim()) e.customer_email = "Required";
     else if (!EMAIL_RE.test(form.customer_email.trim())) e.customer_email = "Enter a valid email";
+    const packs = Number(form.addon_packs);
+    if (!Number.isInteger(packs) || packs < 0 || packs > ADDON.maxPacks)
+      e.addon_packs = `A whole number from 0 to ${ADDON.maxPacks}`;
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -46,7 +50,8 @@ export default function GenerateLicense() {
         customer_name: form.customer_name.trim(),
         customer_email: form.customer_email.trim(),
         organization_name: form.organization_name.trim(),
-        plan_type: form.plan_type,
+        plan_code: form.plan_code,
+        addon_packs: plan?.addonsAllowed ? Number(form.addon_packs) : 0,
       });
       setCreated(license);
     } catch (err) {
@@ -125,22 +130,43 @@ export default function GenerateLicense() {
             {errors.organization_name && <div className="err">{errors.organization_name}</div>}
           </div>
 
-          <div className="field">
-            <label htmlFor="plan_type">Plan</label>
-            <select
-              id="plan_type"
-              value={form.plan_type}
-              onChange={(e) => set("plan_type", e.target.value)}
-            >
-              {PLANS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label} — {p.blurb}
-                </option>
-              ))}
-            </select>
+          <div className="grid-2">
+            <div className="field">
+              <label htmlFor="plan_code">Plan</label>
+              <select
+                id="plan_code"
+                value={form.plan_code}
+                onChange={(e) => set("plan_code", e.target.value)}
+              >
+                {PLANS.map((p) => (
+                  <option key={p.code} value={p.code}>
+                    {planLabel(p.code)} — {p.code}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="addon_packs">
+                Add-on packs ({ADDON.code}, {ADDON.assets} assets each)
+              </label>
+              <input
+                id="addon_packs"
+                type="number"
+                min="0"
+                max={ADDON.maxPacks}
+                step="1"
+                value={plan?.addonsAllowed ? form.addon_packs : 0}
+                disabled={!plan?.addonsAllowed}
+                onChange={(e) => set("addon_packs", e.target.value)}
+              />
+              {errors.addon_packs && <div className="err">{errors.addon_packs}</div>}
+              {!plan?.addonsAllowed && (
+                <div className="note">{plan?.pilot ? "The pilot" : "Unlimited"} takes no add-ons.</div>
+              )}
+            </div>
           </div>
 
-          <PlanPreview plan={plan} />
+          <PlanPreview plan={plan} packs={plan?.addonsAllowed ? Number(form.addon_packs) || 0 : 0} />
 
           <div style={{ marginTop: 20 }}>
             <button className="primary" type="submit" disabled={busy}>
@@ -153,26 +179,34 @@ export default function GenerateLicense() {
   );
 }
 
-function PlanPreview({ plan }) {
+function PlanPreview({ plan, packs }) {
   if (!plan) return null;
+  const total = maxAssets(plan, packs);
   return (
     <div className="card" style={{ background: "var(--bg)", padding: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-        <strong>{plan.label}</strong>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, gap: 12, flexWrap: "wrap" }}>
+        <strong>{planLabel(plan.code)}</strong>
         <span className="note">Valid for {plan.durationDays} days</span>
       </div>
       <div className="usage" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", display: "grid" }}>
-        {OPERATIONS.map((op) => (
-          <div key={op}>
-            <div className="note" style={{ textTransform: "capitalize" }}>{op}</div>
-            <div style={{ fontWeight: 600, fontSize: 16 }}>
-              {plan.limits[op] === null ? "Unlimited" : plan.limits[op]}
-            </div>
+        <div>
+          <div className="note">Plan assets</div>
+          <div style={{ fontWeight: 600, fontSize: 16 }}>{fmtAssets(plan.assets)}</div>
+        </div>
+        <div>
+          <div className="note">Add-ons</div>
+          <div style={{ fontWeight: 600, fontSize: 16 }}>
+            {packs ? `${packs} × ${ADDON.assets} = ${fmtAssets(packs * ADDON.assets)}` : "—"}
           </div>
-        ))}
+        </div>
+        <div>
+          <div className="note">Asset limit</div>
+          <div style={{ fontWeight: 600, fontSize: 16 }}>{fmtAssets(total)}</div>
+        </div>
       </div>
       <p className="note" style={{ margin: "12px 0 0" }}>
-        Limits mirror the server plan catalog and are applied automatically on creation.
+        The limit is stored with the license and signed into every answer NGCorion receives. Audits
+        and hardening runs are not counted.
       </p>
     </div>
   );

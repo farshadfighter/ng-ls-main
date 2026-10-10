@@ -1,5 +1,13 @@
 # License System - Complete Guide
 
+> **Licensing v3 (asset-based plans).** Plans are now SKUs with an asset
+> limit plus 50-asset add-on packs; audits and hardening runs are no longer
+> counted, `/api/licenses/consume`, `plan_type` and the `max_/used_audits|hardens`
+> fields are gone, and the server no longer downgrades a license that was
+> offline (NGCorion falls back to the pilot on its own, reversibly). See
+> `LICENSE_PLANS_SUMMARY.md`. Where this document still describes quotas,
+> `/consume` or `plan_type`, it describes the earlier version.
+
 ## Overview
 
 Your license system is a **separate server-based licensing solution** that validates and tracks license usage for your main application.

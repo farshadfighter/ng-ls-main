@@ -111,7 +111,7 @@ def build_event_payload(event: LicenseEvent, license) -> dict[str, Any]:
     validator on the portal's side should not have to tolerate extras. Notably
     absent, and available if the portal asks for them later:
       * organization_token — the licensed app's shared secret, never sent;
-      * used_audits/used_hardens — usage, not lifecycle;
+      * reported_assets — usage, not lifecycle;
       * an event_id/occurred_at pair, which is what the portal would want if it
         prefers to dedupe on an idempotency key rather than on (event,
         license_id) state.
@@ -129,10 +129,11 @@ def build_event_payload(event: LicenseEvent, license) -> dict[str, Any]:
         # UUID is not JSON-serialisable; str() gives the canonical form.
         "user_uuid7": str(license.user_uuid7) if license.user_uuid7 else None,
         "order_id": license.order_id,
-        # .value, so the portal sees the same lowercase vocabulary the inbound
-        # endpoint accepts ("plan_250"). The Postgres column stores the
-        # upper-case member name; that stays an internal detail.
-        "plan_type": license.plan_type.value,
+        # The SKU the inbound endpoint accepts ("NGC-BUS-250-1Y") and what it
+        # entitles. Licensing v3 replaced plan_type ("plan_250") with these.
+        "plan_code": license.plan_code,
+        "max_assets": license.max_assets,
+        "addon_packs": license.addon_packs or 0,
         "is_active": license.is_active,
         "is_pilot_mode": license.is_pilot_mode,
         "starts_at": _iso(license.created_at),

@@ -60,18 +60,15 @@ class FakeLicense:
         self.user_uuid7 = kw.get("user_uuid7", uuid.UUID("018f3a2b-7c2e-7000-8000-0123456789ab"))
         self.order_id = kw.get("order_id", 990001)
         self.order_number = kw.get("order_number", "ORD-990001")
-        self.plan_type = kw.get("plan_type", _PlanStub("plan_250"))
+        self.plan_code = kw.get("plan_code", "NGC-BUS-250-1Y")
+        self.max_assets = kw.get("max_assets", 350)
+        self.addon_packs = kw.get("addon_packs", 2)
         self.is_active = kw.get("is_active", True)
         self.is_pilot_mode = kw.get("is_pilot_mode", False)
         self.created_at = kw.get("created_at", created)
         self.expires_at = kw.get("expires_at", created + timedelta(days=365))
         self.activated_at = kw.get("activated_at", None)
         self.portal_meta = kw.get("portal_meta", {"invoice": "INV-7"})
-
-
-class _PlanStub:
-    def __init__(self, value):
-        self.value = value
 
 
 def ok_response(status=200, text="{}"):
@@ -105,7 +102,7 @@ class PayloadTest(unittest.TestCase):
             set(payload),
             {
                 "event", "license_id", "license_key", "user_uuid7", "order_id",
-                "plan_type", "is_active", "is_pilot_mode", "starts_at",
+                "plan_code", "max_assets", "addon_packs", "is_active", "is_pilot_mode", "starts_at",
                 "expires_at", "meta",
             },
         )
@@ -126,20 +123,26 @@ class PayloadTest(unittest.TestCase):
             self.assertEqual(payload["event"], expected)
 
     def test_uuid_and_plan_are_json_safe(self):
-        """A UUID object and an enum are not JSON-serialisable; both must be
-        flattened at build time or requests.post(json=...) raises in a worker."""
+        """A UUID object is not JSON-serialisable; it must be flattened at
+        build time or requests.post(json=...) raises in a worker."""
         import json
 
         payload = build_event_payload(LicenseEvent.CREATED, FakeLicense())
         self.assertIsInstance(payload["user_uuid7"], str)
-        self.assertEqual(payload["plan_type"], "plan_250")
+        self.assertEqual(payload["plan_code"], "NGC-BUS-250-1Y")
         json.dumps(payload)  # must not raise
 
-    def test_plan_type_is_the_lowercase_value(self):
-        """Same vocabulary the inbound endpoint accepts, not the upper-case
-        member name Postgres stores."""
+    def test_plan_carries_the_asset_entitlement(self):
+        """The SKU the inbound endpoint accepts, and what it entitles."""
         payload = build_event_payload(LicenseEvent.CREATED, FakeLicense())
-        self.assertEqual(payload["plan_type"], "plan_250")
+        self.assertEqual(
+            (payload["plan_code"], payload["max_assets"], payload["addon_packs"]),
+            ("NGC-BUS-250-1Y", 350, 2),
+        )
+        unlimited = build_event_payload(
+            LicenseEvent.CREATED, FakeLicense(plan_code="NGC-ENT-ULT-1Y", max_assets=None, addon_packs=0)
+        )
+        self.assertIsNone(unlimited["max_assets"])
 
     def test_starts_at_is_created_at_so_the_term_is_consistent(self):
         lic = FakeLicense()

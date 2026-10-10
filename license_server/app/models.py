@@ -3,7 +3,6 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
-    Enum as SQLEnum,
     Index,
     Integer,
     String,
@@ -13,22 +12,16 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 from .database import Base
+from . import plans
 import enum
-
-class PlanType(str, enum.Enum):
-    PILOT = "pilot"         # تست 1 ماهه
-    PLAN_100 = "plan_100"   # 100 Audit / 100 Hardening
-    PLAN_250 = "plan_250"   # 250 Audit / 250 Hardening
-    PLAN_500 = "plan_500"   # 500 Audit / 500 Hardening
-    UNLIMITED = "unlimited" # نامحدود
 
 class LicenseSource(str, enum.Enum):
     """Where a license record came from.
 
     Deliberately NOT a SQLAlchemy ``Enum`` on the column — ``licenses.source``
-    is a plain VARCHAR(32). The ``plan_type`` column is a native Postgres enum
-    and adding a label to it needs a full type rebuild (see
-    alembic/versions/002_migrate_legacy_plan_types.py for what that costs).
+    is a plain VARCHAR(32). The old ``plan_type`` column was a native Postgres
+    enum, and adding a label to one needs a full type rebuild (see
+    alembic/versions/002_migrate_legacy_plan_types.py for what that cost).
     A new source (say a reseller API) should be one line here, not a migration.
     """
 
@@ -75,17 +68,24 @@ class License(Base):
     customer_email = Column(String, nullable=False)
     organization_name = Column(String, nullable=False)
     
-    plan_type = Column(SQLEnum(PlanType), nullable=False)
+    # The plan's SKU (app/plans.py), e.g. "NGC-BUS-250-1Y". A plain string,
+    # not a native enum, so a new plan is a catalog entry and not a migration.
+    plan_code = Column(String(32), nullable=False)
 
-    # محدودیت‌های عملیاتی (Asset Management is not license-gated: no asset/
-    # discovery/monitor entitlement dimensions here — only audit and harden)
-    max_audits = Column(Integer, nullable=True)  # null = unlimited
-    max_hardens = Column(Integer, nullable=True)
+    # The license's entitlement: how many assets NGCorion may manage. Stored,
+    # not derived from the catalog at read time, so a license keeps what it
+    # was sold with: plan base + 50 per add-on pack (app/plans.py).
+    # NULL = unlimited.
+    max_assets = Column(Integer, nullable=True)
+    addon_packs = Column(Integer, nullable=False, default=0, server_default="0")
 
-    # مصرف فعلی
-    used_audits = Column(Integer, default=0)
-    used_hardens = Column(Integer, default=0)
-    
+    # What the licensed machine last reported in its heartbeat: how many
+    # assets it manages, and when. Information for the admin (a customer
+    # outgrowing the plan); the limit itself is enforced by NGCorion from the
+    # signed max_assets.
+    reported_assets = Column(Integer, nullable=True)
+    reported_assets_at = Column(DateTime(timezone=True), nullable=True)
+
     # VM fingerprint برای قفل شدن روی یک ماشین
     vm_fingerprint = Column(String, nullable=True)
     # How the binding was made: "client" = computed by NGCorion on the
@@ -94,7 +94,11 @@ class License(Base):
     fingerprint_source = Column(String(16), nullable=True)
     
     is_active = Column(Boolean, default=True)
-    is_pilot_mode = Column(Boolean, default=False)  # آیا در حالت Pilot است؟
+    # A trial license. Set for the pilot plan, or by the portal for a trial
+    # sold on another plan. Not set because a machine was offline: NGCorion
+    # falls back to the pilot entitlement on its own, and only until it
+    # reaches this server again.
+    is_pilot_mode = Column(Boolean, default=False)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     activated_at = Column(DateTime(timezone=True), nullable=True)
@@ -139,6 +143,13 @@ class License(Base):
     # adds a key.
     portal_meta = Column(JSONB, nullable=True)
 
+    @property
+    def plan_name(self) -> str:
+        """The plan's product name ("NGCorion Business"); the code itself for a plan the
+        catalog no longer has."""
+        plan = plans.PLANS.get(self.plan_code or "")
+        return plan.name if plan else (self.plan_code or "")
+
 
 class PortalUserCache(Base):
     """Local copy of a portal user, for the admin UI's license form.
@@ -182,9 +193,9 @@ class PortalOrderCache(Base):
 
     Fed by GET {PORTAL_BASE_URL}/internal/ls/orders in phase 4.
 
-    ``plan_type`` is a plain String, not PlanType: the portal's plan vocabulary
-    is its own, and an order naming a plan this server does not offer must
-    still be cacheable and visible to an admin rather than failing the sync.
+    ``plan_type`` is the portal's own plan string, not checked against the
+    catalog (app/plans.py): an order naming a plan this server does not offer
+    must still be cacheable and visible to an admin rather than failing the sync.
     """
 
     __tablename__ = "portal_orders_cache"

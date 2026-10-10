@@ -68,10 +68,11 @@ def create_license_from_portal(
     201 for a new license, 200 for a replay — while the body is identical, so a
     portal that ignores the status code still behaves correctly.
 
-    ``plan_type`` must be a lowercase plan value ("pilot", "plan_100",
-    "plan_250", "plan_500", "unlimited"); anything else is a 422.
+    ``plan_code`` is a SKU of the catalog (app/plans.py, e.g. "NGC-ENT-500-1Y"),
+    with ``addon_packs`` 50-asset add-ons; ``plan_type`` with an old plan name
+    ("plan_250") is accepted instead. Anything else is a 422.
 
-    Quotas (max_audits/max_hardens) come from this server's plan catalog.
+    The asset limit comes from this server's catalog (plan + add-ons).
     ``duration_days`` and ``is_pilot_mode``, when sent, override the catalog —
     the order decides the term, not the price list.
     """
@@ -107,7 +108,8 @@ def get_license_status(
     return schemas.PortalLicenseStatus(
         license_id=license.id,
         license_key=license.license_key,
-        plan_type=license.plan_type,
+        plan_code=license.plan_code,
+        plan_name=license.plan_name,
         is_active=license.is_active,
         is_pilot_mode=license.is_pilot_mode,
         customer_name=license.customer_name,
@@ -123,10 +125,10 @@ def get_license_status(
         last_validated_at=license.last_validated_at,
         last_heartbeat_at=license.last_heartbeat_at,
         portal_synced_at=license.portal_synced_at,
-        max_audits=license.max_audits,
-        max_hardens=license.max_hardens,
-        used_audits=license.used_audits,
-        used_hardens=license.used_hardens,
+        max_assets=license.max_assets,
+        addon_packs=license.addon_packs or 0,
+        reported_assets=license.reported_assets,
+        reported_assets_at=license.reported_assets_at,
         # Reports that the license is bound to a machine without leaking the
         # fingerprint hash itself.
         is_activated=license.vm_fingerprint is not None,

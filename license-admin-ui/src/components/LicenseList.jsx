@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { listLicenses, revokeLicense, deleteLicense } from "../api/client.js";
-import { planLabel } from "../lib/plans.js";
+import { fmtAssets, licensePlanLabel } from "../lib/plans.js";
 import {
   fmtDateShort,
   licenseStatus,
@@ -45,7 +45,8 @@ export default function LicenseList() {
             l.customer_name,
             l.customer_email,
             l.organization_name,
-            l.plan_type,
+            l.plan_code,
+            l.plan_name,
           ]
             .filter(Boolean)
             .some((v) => String(v).toLowerCase().includes(q))
@@ -100,7 +101,10 @@ export default function LicenseList() {
       { header: "Organization", value: (l) => l.organization_name },
       { header: "Customer", value: (l) => l.customer_name },
       { header: "Email", value: (l) => l.customer_email },
-      { header: "Plan", value: (l) => l.plan_type },
+      { header: "Plan", value: (l) => l.plan_code },
+      { header: "Add-on packs", value: (l) => l.addon_packs },
+      { header: "Asset limit", value: (l) => (l.max_assets ?? "unlimited") },
+      { header: "Reported assets", value: (l) => (l.reported_assets ?? "") },
       { header: "Status", value: (l) => licenseStatus(l) },
       { header: "Created", value: (l) => l.created_at },
       { header: "Expires", value: (l) => l.expires_at },
@@ -151,6 +155,7 @@ export default function LicenseList() {
                 <th>Organization</th>
                 <th>Customer</th>
                 <th>Plan</th>
+                <th className="num" title="Reported by the licensed machine / the license limit">Assets</th>
                 <th>Status</th>
                 <th>Expires</th>
                 <th></th>
@@ -172,7 +177,10 @@ export default function LicenseList() {
                       <div className="note">{l.customer_email}</div>
                     </td>
                     <td>
-                      <span className="badge plan">{planLabel(l.plan_type)}</span>
+                      <span className="badge plan">{licensePlanLabel(l)}</span>
+                    </td>
+                    <td className="num">
+                      {l.reported_assets ?? "—"} / {fmtAssets(l.max_assets)}
                     </td>
                     <td>
                       <StatusBadge license={l} />
