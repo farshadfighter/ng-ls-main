@@ -74,8 +74,18 @@ services:
       # to import without it. Fail here, with a readable message, rather than in
       # a container restart loop.
       - SECRET_KEY=${SECRET_KEY:?set SECRET_KEY in .env (openssl rand -hex 32)}
+      # The FIRST admin account, made at the first start (there is none yet);
+      # it must change this password at first login. After that both are
+      # unused: accounts are managed in the console (Users) or with
+      # `docker compose exec backend python -m app.cli`.
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+      # Admin sessions end after this much inactivity, and this long after
+      # login at the latest; an account locks for ADMIN_LOCKOUT_MINUTES after
+      # ADMIN_MAX_FAILED_LOGINS failed logins in a row.
+      - ADMIN_IDLE_TIMEOUT_MINUTES=${ADMIN_IDLE_TIMEOUT_MINUTES:-15}
+      - ADMIN_MAX_FAILED_LOGINS=${ADMIN_MAX_FAILED_LOGINS:-5}
+      - ADMIN_LOCKOUT_MINUTES=${ADMIN_LOCKOUT_MINUTES:-15}
       # Admin login is gated by Cloudflare Turnstile; without the secret every
       # login is rejected, so refuse to start instead.
       - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:?set TURNSTILE_SECRET_KEY in .env}
@@ -89,7 +99,7 @@ services:
       # VITE_LICENSE_API_URL) — set it in .env to that UI's origin(s) then.
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-}
       - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-60}
-      - JWT_EXPIRE_HOURS=${JWT_EXPIRE_HOURS:-24}
+      - JWT_EXPIRE_HOURS=${JWT_EXPIRE_HOURS:-8}
       # Internal portal integration. Required, same fail-fast pattern as
       # SECRET_KEY: without it /internal/portal/* answers 503 on every call,
       # so refuse to start rather than come up with a dead integration.

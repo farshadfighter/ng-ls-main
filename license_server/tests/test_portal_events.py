@@ -25,7 +25,7 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost/test")
-os.environ.setdefault("SECRET_KEY", "test-secret-key")
+os.environ.setdefault("SECRET_KEY", "test-secret-key-0123456789abcdef-0123456789")
 os.environ.setdefault("TURNSTILE_SECRET_KEY", "test-turnstile-secret")
 os.environ.setdefault("ADMIN_USERNAME", "test-admin")
 os.environ.setdefault("ADMIN_PASSWORD", "correct-horse-battery-staple")
@@ -35,7 +35,7 @@ os.environ["PORTAL_JWT_SECRET"] = PORTAL_SECRET
 os.environ["PORTAL_BASE_URL"] = "http://172.16.120.80"
 
 import requests  # noqa: E402
-from jose import jwt  # noqa: E402
+import jwt  # noqa: E402
 
 from app.core import portal_events  # noqa: E402
 from app.core.config import settings  # noqa: E402
@@ -190,7 +190,7 @@ class EventTokenTest(unittest.TestCase):
 
     def test_our_own_event_token_is_rejected_by_our_inbound_verifier(self):
         """The concrete consequence of the reversal, asserted end to end."""
-        from jose import JWTError
+        from jwt import PyJWTError as JWTError
 
         with self.assertRaises(JWTError):
             jwt.decode(
@@ -217,13 +217,13 @@ class EventTokenTest(unittest.TestCase):
 
     def test_each_token_is_unique(self):
         jtis = {
-            jwt.get_unverified_claims(portal_events.create_event_token())["jti"]
+            jwt.decode(portal_events.create_event_token(), options={"verify_signature": False})["jti"]
             for _ in range(5)
         }
         self.assertEqual(len(jtis), 5)
 
     def test_signed_with_the_portal_secret_not_the_admin_secret(self):
-        from jose import JWTError
+        from jwt import PyJWTError as JWTError
 
         with self.assertRaises(JWTError):
             jwt.decode(
@@ -349,7 +349,7 @@ class RetryPolicyTest(NotifierTestCase):
         ]
         self.assertEqual(len(tokens), 3)
         self.assertEqual(len(set(tokens)), 3, "token was reused across attempts")
-        jtis = {jwt.get_unverified_claims(t)["jti"] for t in tokens}
+        jtis = {jwt.decode(t, options={"verify_signature": False})["jti"] for t in tokens}
         self.assertEqual(len(jtis), 3)
 
     def test_backoff_is_exponential_and_jittered(self):

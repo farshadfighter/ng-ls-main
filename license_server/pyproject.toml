@@ -1,0 +1,21 @@
+# Tool configuration for the license server (dependencies: requirements.txt).
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+extend-exclude = ["alembic/versions/00[1-5]_*.py"]
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, warnings, bugbear, and the bandit security rules.
+select = ["E", "F", "W", "B", "S"]
+ignore = [
+    "E501",   # long lines: line-length is a guide, not a gate
+    "B008",   # Depends(...) in argument defaults is how FastAPI works
+    "B904",   # HTTPException raised from an except block on purpose (the cause is logged)
+    "S105",   # constants like TOKEN_ISSUER are not passwords
+    "S311",   # random() only for retry jitter, never for secrets (secrets module is used for those)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106", "S108", "B017", "E402", "E731"]
+"scripts/*" = ["S"]

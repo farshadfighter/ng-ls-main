@@ -17,9 +17,9 @@ Why not reuse app/core/security.py
 That module validates admin UI sessions against SECRET_KEY. Portal tokens are
 verified against a different secret (PORTAL_JWT_SECRET) on purpose, so that a
 leak of one cannot mint the other, and they carry claims — iss, aud, jti — an
-admin session does not have. python-jose also silently SKIPS iss/aud
-verification unless `issuer=`/`audience=` are passed to `jwt.decode`, which is
-why they are passed explicitly below rather than left to the defaults.
+admin session does not have. `issuer=`/`audience=` and the required claims are
+passed to `jwt.decode` explicitly: a claim that is neither required nor given
+an expected value is not checked.
 """
 import ipaddress
 import logging
@@ -29,7 +29,8 @@ from typing import Optional
 import redis
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
+import jwt
+from jwt import PyJWTError
 
 from .config import settings
 from .redis_client import redis_client
@@ -202,20 +203,12 @@ def verify_portal_jwt(
             algorithms=["HS256"],
             issuer=settings.PORTAL_JWT_ISSUER,
             audience=settings.PORTAL_JWT_AUDIENCE,
-            options={
-                # exp and iat are required, not merely checked when present:
-                # jose treats a missing claim as nothing to verify, so without
-                # this a token with no exp would never expire.
-                "require_exp": True,
-                "require_iat": True,
-                "verify_exp": True,
-                "verify_iat": True,
-                "verify_aud": True,
-                "verify_iss": True,
-                "leeway": settings.PORTAL_JWT_LEEWAY_SECONDS,
-            },
+            leeway=settings.PORTAL_JWT_LEEWAY_SECONDS,
+            # Required, not merely checked when present: without this a token
+            # with no exp would never expire.
+            options={"require": ["exp", "iat", "iss", "aud", "jti"]},
         )
-    except JWTError as exc:
+    except PyJWTError as exc:
         raise _reject(f"token did not verify ({exc})", caller)
 
     exp = claims.get("exp")
@@ -223,7 +216,7 @@ def verify_portal_jwt(
     if not isinstance(exp, (int, float)) or not isinstance(iat, (int, float)):
         raise _reject("exp/iat are not numeric", caller)
 
-    # Cap the lifetime. jose has already confirmed the token is unexpired; this
+    # Cap the lifetime. decode has already confirmed the token is unexpired; this
     # additionally refuses a token that was minted to live far longer than the
     # integration's 5 minutes, which would otherwise be a long-lived
     # credential travelling over the portal's plain-HTTP hop.

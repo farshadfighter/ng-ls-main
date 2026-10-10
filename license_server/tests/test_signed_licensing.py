@@ -19,6 +19,7 @@ The app under test carries only the licenses router (no rate limiter, no Redis);
 license rows are created and removed by each test.
 """
 import base64
+import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 import os
@@ -31,7 +32,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost/test")
-os.environ.setdefault("SECRET_KEY", "test-secret-key")
+os.environ.setdefault("SECRET_KEY", "test-secret-key-0123456789abcdef-0123456789")
 
 from cryptography.hazmat.primitives import serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (  # noqa: E402
@@ -73,6 +74,12 @@ def signed_headers(data: dict, org_token: str) -> dict:
     return {"X-Signature": generate_signature(data, org_token, ts), "X-Timestamp": ts}
 
 
+
+def fp(name: str) -> str:
+    """A machine fingerprint as NGCorion sends one (SHA-256 hex), for a readable machine name."""
+    return hashlib.sha256(name.encode()).hexdigest()
+
+
 class SignedLicensingTest(unittest.TestCase):
 
     def setUp(self):
@@ -105,13 +112,13 @@ class SignedLicensingTest(unittest.TestCase):
                                 json={"license_key": self.lic.license_key, "vm_fingerprint": fp, "nonce": nonce})
 
     def test_activation_answer_is_signed_and_matches_the_plain_fields(self):
-        r = self.activate("fp-machine-a", nonce="abc123")
+        r = self.activate(fp("fp-machine-a"), nonce="abc123")
         self.assertEqual(r.status_code, 200, r.text)
         body = r.json()
         claims = decode(body["signed_token"])
         self.assertEqual(claims["typ"], "activate")
         self.assertEqual(claims["lic"], self.lic.license_key)
-        self.assertEqual(claims["fp"], "fp-machine-a")
+        self.assertEqual(claims["fp"], fp("fp-machine-a"))
         self.assertEqual(claims["nonce"], "abc123")
         self.assertTrue(claims["valid"])
         self.assertEqual(claims["plan"], "NGC-BUS-250-1Y")
@@ -124,7 +131,7 @@ class SignedLicensingTest(unittest.TestCase):
         self.assertGreater(claims["exp"], claims["iat"])
 
     def test_a_changed_token_no_longer_verifies(self):
-        token = self.activate("fp-machine-a").json()["signed_token"]
+        token = self.activate(fp("fp-machine-a")).json()["signed_token"]
         body, sig = token.split(".")
         claims = decode(token)
         claims["limits"] = {"max_assets": None, "addon_packs": 0}
@@ -134,19 +141,19 @@ class SignedLicensingTest(unittest.TestCase):
 
     def test_without_a_signing_key_the_server_refuses_to_answer(self):
         settings.LICENSE_SIGNING_PRIVATE_KEY = None
-        r = self.activate("fp-machine-a")
+        r = self.activate(fp("fp-machine-a"))
         self.assertEqual(r.status_code, 503)
 
     def test_one_machine_per_license(self):
-        self.assertEqual(self.activate("fp-machine-a").status_code, 200)
-        self.assertEqual(self.activate("fp-machine-a").status_code, 200)       # same machine again
-        r = self.activate("fp-machine-b")
+        self.assertEqual(self.activate(fp("fp-machine-a")).status_code, 200)
+        self.assertEqual(self.activate(fp("fp-machine-a")).status_code, 200)       # same machine again
+        r = self.activate(fp("fp-machine-b"))
         self.assertEqual(r.status_code, 400)
-        self.assertIn("another VM", r.json()["detail"])
+        self.assertIn("another machine", r.json()["detail"])
 
     def test_validate_says_no_for_another_machine_and_signs_the_no(self):
-        org = self.activate("fp-machine-a").json()["organization_token"]
-        data = {"license_key": self.lic.license_key, "organization_token": org, "vm_fingerprint": "fp-machine-b"}
+        org = self.activate(fp("fp-machine-a")).json()["organization_token"]
+        data = {"license_key": self.lic.license_key, "organization_token": org, "vm_fingerprint": fp("fp-machine-b")}
         r = self.client.post("/api/licenses/validate", json=dict(data, nonce="v1"), headers=signed_headers(data, org))
         body = r.json()
         self.assertFalse(body["valid"])
@@ -161,8 +168,8 @@ class SignedLicensingTest(unittest.TestCase):
         self.assertEqual(r.status_code, 404)
 
     def test_heartbeat_token_reports_validity_and_records_the_asset_count(self):
-        org = self.activate("fp-machine-a").json()["organization_token"]
-        data = {"license_key": self.lic.license_key, "organization_token": org, "vm_fingerprint": "fp-machine-a",
+        org = self.activate(fp("fp-machine-a")).json()["organization_token"]
+        data = {"license_key": self.lic.license_key, "organization_token": org, "vm_fingerprint": fp("fp-machine-a"),
                 "nonce": "h1", "asset_count": 312}
         r = self.client.post("/api/licenses/heartbeat", json=data)
         self.assertEqual(r.status_code, 200, r.text)
@@ -190,11 +197,11 @@ class SignedLicensingTest(unittest.TestCase):
         # Up to v2 the server overwrote the plan with the pilot plan after 48h
         # without a heartbeat. The offline fallback is NGCorion's own now, and
         # reversible; the license keeps what was sold.
-        org = self.activate("fp-machine-a").json()["organization_token"]
+        org = self.activate(fp("fp-machine-a")).json()["organization_token"]
         self.db.expire_all()
         self.lic.last_heartbeat_at = datetime.now(timezone.utc) - timedelta(days=10)
         self.db.commit()
-        vdata = {"license_key": self.lic.license_key, "organization_token": org, "vm_fingerprint": "fp-machine-a"}
+        vdata = {"license_key": self.lic.license_key, "organization_token": org, "vm_fingerprint": fp("fp-machine-a")}
         r = self.client.post("/api/licenses/validate", json=dict(vdata, nonce="v3"), headers=signed_headers(vdata, org))
         claims = decode(r.json()["signed_token"])
         self.assertTrue(claims["valid"])
@@ -209,29 +216,29 @@ class SignedLicensingTest(unittest.TestCase):
         # An older NGCorion activates (no nonce): bound to whatever it sent,
         # which was the license server's own fingerprint.
         r = self.client.post("/api/licenses/activate",
-                             json={"license_key": self.lic.license_key, "vm_fingerprint": "server-own-fp"})
+                             json={"license_key": self.lic.license_key, "vm_fingerprint": fp("server-own-fp")})
         self.assertEqual(r.status_code, 200)
         self.db.expire_all()
         self.assertIsNone(self.lic.fingerprint_source)
 
         # The upgraded NGCorion computes its own fingerprint: one move allowed.
-        self.assertEqual(self.activate("fp-real-machine").status_code, 200)
+        self.assertEqual(self.activate(fp("fp-real-machine")).status_code, 200)
         self.db.expire_all()
-        self.assertEqual((self.lic.vm_fingerprint, self.lic.fingerprint_source), ("fp-real-machine", "client"))
+        self.assertEqual((self.lic.vm_fingerprint, self.lic.fingerprint_source), (fp("fp-real-machine"), "client"))
         # ...and only one.
-        self.assertEqual(self.activate("fp-other-machine").status_code, 400)
+        self.assertEqual(self.activate(fp("fp-other-machine")).status_code, 400)
 
     def test_an_old_client_cannot_steal_a_client_binding(self):
-        self.assertEqual(self.activate("fp-real-machine").status_code, 200)
+        self.assertEqual(self.activate(fp("fp-real-machine")).status_code, 200)
         r = self.client.post("/api/licenses/activate",
-                             json={"license_key": self.lic.license_key, "vm_fingerprint": "server-own-fp"})
+                             json={"license_key": self.lic.license_key, "vm_fingerprint": fp("server-own-fp")})
         self.assertEqual(r.status_code, 400)
 
     def test_admin_can_release_the_binding(self):
-        self.assertEqual(self.activate("fp-machine-a").status_code, 200)
+        self.assertEqual(self.activate(fp("fp-machine-a")).status_code, 200)
         self.db.expire_all()            # the activation ran in the request's own session
         crud.reset_binding(self.db, self.lic.license_key)
-        self.assertEqual(self.activate("fp-machine-b").status_code, 200)
+        self.assertEqual(self.activate(fp("fp-machine-b")).status_code, 200)
         self.assertIsNone(crud.reset_binding(self.db, "NO-SUCH-KEY"))
 
 

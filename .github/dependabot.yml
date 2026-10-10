@@ -1,0 +1,18 @@
+# Weekly update proposals for the license server's dependencies; CI (pip-audit,
+# npm audit) fails on known vulnerabilities in between.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /license_server
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+  - package-ecosystem: npm
+    directory: /license-admin-ui
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: monthly}
+  - package-ecosystem: docker
+    directory: /license_server
+    schedule: {interval: monthly}

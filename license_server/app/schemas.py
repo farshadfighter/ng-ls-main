@@ -30,10 +30,18 @@ class _PlanChoice(BaseModel):
         return self
 
 
+# Bounds on what a client may send. A license key is XXXX-XXXX-XXXX-XXXX; a fingerprint is a
+# hex digest (NGCorion sends SHA-256, 64 characters); an organization token is 64 hex
+# characters. Anything far outside that is refused before it reaches the database.
+LicenseKey = Field(min_length=1, max_length=64)
+Fingerprint = Field(min_length=16, max_length=128, pattern=r"^[A-Za-z0-9]+$")
+OrgToken = Field(min_length=1, max_length=128)
+
+
 class LicenseCreate(_PlanChoice):
-    customer_name: str
+    customer_name: str = Field(min_length=1, max_length=255)
     customer_email: EmailStr
-    organization_name: str
+    organization_name: str = Field(min_length=1, max_length=255)
     # An offline (air-gapped) license: runs on signed license files issued
     # from the admin UI instead of activation and heartbeats (app/offline.py).
     offline_allowed: bool = False
@@ -56,16 +64,16 @@ class LicenseCreate(_PlanChoice):
     order_number: Optional[str] = Field(default=None, max_length=64)
 
 class LicenseActivate(BaseModel):
-    license_key: str
-    vm_fingerprint: str
+    license_key: str = LicenseKey
+    vm_fingerprint: str = Fingerprint
     # Random value the client picks per request; echoed inside the signed
     # token so a recorded answer cannot be replayed to the client later.
     nonce: Optional[str] = Field(default=None, max_length=128)
 
 class LicenseValidate(BaseModel):
-    license_key: str
-    organization_token: str
-    vm_fingerprint: str
+    license_key: str = LicenseKey
+    organization_token: str = OrgToken
+    vm_fingerprint: str = Fingerprint
     # Random value the client picks per request; echoed inside the signed
     # token so a recorded answer cannot be replayed to the client later.
     nonce: Optional[str] = Field(default=None, max_length=128)
@@ -178,7 +186,7 @@ class LicenseResponse(BaseModel):
     expires_at: datetime
     last_validated_at: Optional[datetime]
     last_heartbeat_at: Optional[datetime]
-    
+
     class Config:
         from_attributes = True
 

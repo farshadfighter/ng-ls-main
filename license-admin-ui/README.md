@@ -36,8 +36,10 @@ different server with an env var:
 LICENSE_SERVER_URL=http://localhost:8001 npm run dev
 ```
 
-Sign in with the server's admin credentials (`ADMIN_USERNAME` /
-`ADMIN_PASSWORD` from the license server's `.env`).
+Sign in with your own account. The first one comes from `ADMIN_USERNAME` /
+`ADMIN_PASSWORD` in the license server's `.env` (made at the first start; its
+password must be changed at first login); further accounts are made under
+Users. Roles: admin, operator, auditor.
 
 ## Build
 

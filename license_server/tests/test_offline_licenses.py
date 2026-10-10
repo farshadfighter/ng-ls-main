@@ -18,7 +18,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost/test")
-os.environ.setdefault("SECRET_KEY", "test-secret-key")
+os.environ.setdefault("SECRET_KEY", "test-secret-key-0123456789abcdef-0123456789")
 
 from cryptography.hazmat.primitives import serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
@@ -33,16 +33,16 @@ SEED = base64.b64encode(KEY.private_bytes(
 )).decode()
 FP = "a" * 64
 
-crud = models = admin = get_current_admin = SessionLocal = settings = license_token = None
+crud = models = admin = get_current_admin = AdminPrincipal = SessionLocal = settings = license_token = None
 
 
 def setUpModule():
     # Imported here, not at the top: they load the settings, which other test modules must load
     # first with the environment they need (see test_plans.py).
-    global crud, models, admin, get_current_admin, SessionLocal, settings, license_token
+    global crud, models, admin, get_current_admin, AdminPrincipal, SessionLocal, settings, license_token
     from app import crud, models
     from app.core.config import settings
-    from app.core.security import get_current_admin
+    from app.core.security import AdminPrincipal, get_current_admin
     from app.database import Base, SessionLocal, engine
     from app.routers import admin
     from app.utils import license_token
@@ -99,7 +99,8 @@ class OfflineIssueTest(unittest.TestCase):
         self.email = f"offline-{uuid.uuid4().hex[:10]}@example.com"
         app = FastAPI()
         app.include_router(admin.router)
-        app.dependency_overrides[get_current_admin] = lambda: "test-admin"
+        app.dependency_overrides[get_current_admin] = lambda: AdminPrincipal(
+            user_id=0, username="test-admin", role="admin", session_id="test")
         self.client = TestClient(app)
 
     def tearDown(self):

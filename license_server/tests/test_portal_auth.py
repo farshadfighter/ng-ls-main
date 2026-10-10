@@ -26,7 +26,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost/test")
-os.environ.setdefault("SECRET_KEY", "test-secret-key")
+os.environ.setdefault("SECRET_KEY", "test-secret-key-0123456789abcdef-0123456789")
 os.environ.setdefault("TURNSTILE_SECRET_KEY", "test-turnstile-secret")
 os.environ.setdefault("ADMIN_USERNAME", "test-admin")
 os.environ.setdefault("ADMIN_PASSWORD", "correct-horse-battery-staple")
@@ -40,7 +40,7 @@ os.environ["PORTAL_IP_WHITELIST"] = ALLOWED_IP
 import redis  # noqa: E402
 from fastapi import Depends, FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from jose import jwt  # noqa: E402
+import jwt  # noqa: E402
 
 from app.core import portal_auth  # noqa: E402
 from app.core.config import settings  # noqa: E402
@@ -195,8 +195,8 @@ class PortalTokenTest(PortalAuthTestCase):
         self.assertEqual(self.call(token).status_code, 401)
 
     def test_wrong_audience_is_rejected(self):
-        """python-jose skips aud verification unless audience= is passed to
-        decode; this fails if that argument is ever dropped."""
+        """Without audience= the aud claim would not be checked against ours; this
+        fails if that argument is ever dropped."""
         token = make_token(audience="some-other-service", jti=str(uuid.uuid4()))
         self.assertEqual(self.call(token).status_code, 401)
 
@@ -205,8 +205,7 @@ class PortalTokenTest(PortalAuthTestCase):
         self.assertEqual(self.call(token).status_code, 401)
 
     def test_token_without_exp_is_rejected(self):
-        """require_exp: without it, jose has nothing to verify and a token with
-        no expiry would be valid forever."""
+        """exp is required: a token with no expiry would otherwise be valid forever."""
         token = make_token(omit=("exp",), jti=str(uuid.uuid4()))
         self.assertEqual(self.call(token).status_code, 401)
 
@@ -227,9 +226,8 @@ class PortalTokenTest(PortalAuthTestCase):
     def test_alg_none_token_is_rejected(self):
         """The classic JWT downgrade: a token whose header claims no signature.
 
-        Hand-assembled rather than built with jwt.encode, because python-jose
-        refuses to *encode* alg=none at all — only decoding it has ever been
-        the risk. Passing algorithms=["HS256"] to decode is what refuses it;
+        Hand-assembled rather than built with jwt.encode - only decoding an
+        alg=none token has ever been the risk. Passing algorithms=["HS256"] to decode is what refuses it;
         this fails if that is ever widened or read from the token header.
         """
         now = int(time.time())

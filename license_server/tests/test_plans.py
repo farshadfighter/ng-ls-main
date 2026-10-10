@@ -22,7 +22,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost/test")
-os.environ.setdefault("SECRET_KEY", "test-secret-key")
+os.environ.setdefault("SECRET_KEY", "test-secret-key-0123456789abcdef-0123456789")
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -30,7 +30,7 @@ from pydantic import ValidationError  # noqa: E402
 
 from app import plans  # noqa: E402  (no settings: safe to import during discovery)
 
-crud = models = schemas = admin = get_current_admin = SessionLocal = None
+crud = models = schemas = admin = get_current_admin = AdminPrincipal = SessionLocal = None
 
 
 def setUpModule():
@@ -38,9 +38,9 @@ def setUpModule():
     # unittest discovery imports every test module before running any. The
     # settings must first be loaded by the modules that set the environment
     # they need (test_portal_*, test_security).
-    global crud, models, schemas, admin, get_current_admin, SessionLocal
+    global crud, models, schemas, admin, get_current_admin, AdminPrincipal, SessionLocal
     from app import crud, models, schemas
-    from app.core.security import get_current_admin
+    from app.core.security import AdminPrincipal, get_current_admin
     from app.database import Base, SessionLocal, engine
     from app.routers import admin
     Base.metadata.create_all(bind=engine)
@@ -116,7 +116,8 @@ class LicensePlanTest(unittest.TestCase):
         self.email = f"plans-{uuid.uuid4().hex[:10]}@example.com"
         app = FastAPI()
         app.include_router(admin.router)
-        app.dependency_overrides[get_current_admin] = lambda: "test-admin"
+        app.dependency_overrides[get_current_admin] = lambda: AdminPrincipal(
+            user_id=0, username="test-admin", role="admin", session_id="test")
         self.client = TestClient(app)
 
     def tearDown(self):

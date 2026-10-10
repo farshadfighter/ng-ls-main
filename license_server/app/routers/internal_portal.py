@@ -31,11 +31,11 @@ gate.
 """
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
-from .. import crud, schemas
-from ..core.portal_auth import require_portal_ip, verify_portal_jwt
+from .. import audit, crud, schemas
+from ..core.portal_auth import client_ip, require_portal_ip, verify_portal_jwt
 from ..database import get_db
 
 logger = logging.getLogger(__name__)
@@ -58,6 +58,7 @@ router = APIRouter(
 def create_license_from_portal(
     payload: schemas.PortalLicenseCreate,
     response: Response,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """Create a license for a portal order.
@@ -81,6 +82,11 @@ def create_license_from_portal(
     response.status_code = (
         status.HTTP_201_CREATED if created else status.HTTP_200_OK
     )
+    if created:
+        audit.record("license.create", audit.SUCCESS, actor="portal", ip=client_ip(request),
+                     target=license.license_key,
+                     detail={"plan": license.plan_code, "addon_packs": license.addon_packs,
+                             "order_id": license.order_id, "order_number": license.order_number})
 
     return schemas.PortalLicenseResponse(
         license_id=license.id,

@@ -1,0 +1,98 @@
+# Checks for every push and pull request: the license server's tests against a
+# real PostgreSQL and Redis, lint (ruff, including the bandit security rules),
+# known vulnerabilities in the dependencies, and the admin UI build.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: License server (lint, tests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci-password
+          POSTGRES_DB: ls_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci -d ls_ci" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    defaults:
+      run:
+        working-directory: license_server
+    env:
+      DATABASE_URL: postgresql://ci:ci-password@localhost:5432/ls_ci
+      SECRET_KEY: ci-secret-key-0123456789abcdef-0123456789abcdef
+      REDIS_HOST: localhost
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: license_server/requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Lint (ruff)
+        run: ruff check app db_bootstrap.py alembic scripts tests
+      - name: Migrations apply to an empty database and match the models
+        run: |
+          python db_bootstrap.py
+          alembic upgrade head
+          alembic downgrade 007 && alembic upgrade head
+      - name: Tests
+        run: python -W ignore -m unittest discover -s tests -v
+
+  dependencies:
+    name: Dependencies (known vulnerabilities)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Python (pip-audit)
+        run: |
+          pip install pip-audit==2.9.0
+          pip-audit -r license_server/requirements.txt
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Admin UI (npm audit)
+        working-directory: license-admin-ui
+        run: npm audit --audit-level=moderate
+
+  admin-ui:
+    name: Admin UI (build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: license-admin-ui
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: license-admin-ui/package-lock.json
+      - run: npm ci
+      - run: npm run build

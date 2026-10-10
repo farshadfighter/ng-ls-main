@@ -8,6 +8,7 @@ import {
 } from "../lib/format.js";
 import { downloadBlob } from "../lib/clipboard.js";
 import StatusBadge from "./StatusBadge.jsx";
+import { canWrite, isAdmin } from "../auth/auth.js";
 import LicenseDetail from "./LicenseDetail.jsx";
 
 export default function LicenseList() {
@@ -188,15 +189,15 @@ export default function LicenseList() {
                     </td>
                     <td>{fmtDateShort(l.expires_at)}</td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                      <button
+                      {canWrite() && <button
                         className="danger sm"
                         disabled={!l.is_active || revoking === l.license_key}
                         title={l.is_active ? "Revoke (deactivate)" : "Already revoked"}
                         onClick={(e) => handleRevoke(l, e)}
                       >
                         {revoking === l.license_key ? "…" : "Revoke"}
-                      </button>
-                      <button
+                      </button>}
+                      {isAdmin() && <button
                         className="danger sm"
                         style={{ marginLeft: 6 }}
                         disabled={deleting === l.license_key}
@@ -204,7 +205,7 @@ export default function LicenseList() {
                         onClick={(e) => handleDelete(l, e)}
                       >
                         {deleting === l.license_key ? "…" : "Delete"}
-                      </button>
+                      </button>}
                     </td>
                   </tr>
                 );

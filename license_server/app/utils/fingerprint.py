@@ -13,7 +13,7 @@ def get_mac_address() -> Optional[str]:
         mac = ':'.join(['{:02x}'.format((uuid.getnode() >> elements) & 0xff)
                        for elements in range(0, 2*6, 2)][::-1])
         return mac
-    except:
+    except Exception:
         return None
 
 def get_machine_id() -> Optional[str]:
@@ -24,7 +24,7 @@ def get_machine_id() -> Optional[str]:
                 return f.read().strip()
         elif platform.system() == "Windows":
             result = subprocess.run(
-                ["reg", "query", "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid"],
+                ["reg", "query", "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid"],  # noqa: S607 - Windows only, fixed arguments
                 capture_output=True,
                 text=True
             )
@@ -39,17 +39,17 @@ def get_machine_id() -> Optional[str]:
 def get_vm_fingerprint() -> str:
     """Generate unique VM fingerprint based on hardware identifiers"""
     components = []
-    
+
     # MAC address
     mac = get_mac_address()
     if mac:
         components.append(f"mac:{mac}")
-    
+
     # Machine ID
     machine_id = get_machine_id()
     if machine_id:
         components.append(f"machine:{machine_id}")
-    
+
     # Hostname
     try:
         hostname = platform.node()
@@ -57,7 +57,7 @@ def get_vm_fingerprint() -> str:
             components.append(f"host:{hostname}")
     except BaseException as exc:
         logger.warning(f"[Fingerprint] could not read the hostname, excluding it: {exc}")
-    
+
     # CPU info
     try:
         cpu = platform.processor()
@@ -65,7 +65,7 @@ def get_vm_fingerprint() -> str:
             components.append(f"cpu:{cpu}")
     except BaseException as e:
         logger.warning(f"[Fingerprint] could not read the CPU model, excluding it: {e}")
-    
+
     # Combine and hash
     fingerprint_string = "|".join(components)
     return hashlib.sha256(fingerprint_string.encode()).hexdigest()

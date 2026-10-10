@@ -7,6 +7,7 @@ import logging
 import secrets
 import string
 import hashlib
+import hmac
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,11 @@ logger = logging.getLogger(__name__)
 # server again; an offline period never costs the customer the plan they paid
 # for. (Up to licensing v2, validate and heartbeat overwrote the plan with the
 # pilot plan for good.)
+
+def _same(a: Optional[str], b: Optional[str]) -> bool:
+    """Constant-time equality for secrets (organization token, fingerprint)."""
+    return hmac.compare_digest((a or "").encode(), (b or "").encode())
+
 
 def generate_license_key() -> str:
     """generate license key: XXXX-XXXX-XXXX-XXXX"""
@@ -135,16 +141,16 @@ def activate_license(db: Session, license_key: str, vm_fingerprint: str,
     client-computed fingerprint.
     """
     license = get_license_by_key(db, license_key)
-    
+
     if not license:
-        return False, "license key not found", None
-    
+        return False, "License key not found", None
+
     if not license.is_active:
-        return False, "license is deactivate", None
-    
+        return False, "This license has been revoked", None
+
     if license.expires_at < datetime.now(timezone.utc):
-        return False, "license is expierd", None
-    
+        return False, "This license has expired", None
+
     # One machine per license.
     if license.vm_fingerprint and license.vm_fingerprint != vm_fingerprint:
         if client_computed and license.fingerprint_source != "client":
@@ -160,8 +166,8 @@ def activate_license(db: Session, license_key: str, vm_fingerprint: str,
             )
             license.vm_fingerprint = None
         else:
-            return False, "this license already activate in another VM", None
-    
+            return False, "This license is already activated on another machine", None
+
     if not license.vm_fingerprint:
         license.vm_fingerprint = vm_fingerprint
         license.fingerprint_source = "client" if client_computed else None
@@ -179,7 +185,7 @@ def activate_license(db: Session, license_key: str, vm_fingerprint: str,
         # which does expose activated_at and is_activated.
         notifier.notify(LicenseEvent.UPDATED, license)
 
-    return True, "license activate successfully", license
+    return True, "License activated", license
 
 def reset_binding(db: Session, license_key: str) -> models.License:
     """Release a license from its machine (admin action, e.g. after a hardware move or a
@@ -197,26 +203,25 @@ def reset_binding(db: Session, license_key: str) -> models.License:
 
 def validate_license(db: Session, license_key: str, org_token: str, vm_fingerprint: str) -> tuple[bool, str, models.License]:
     license = get_license_by_key(db, license_key)
-    
-    if not license:
-        return False, "license key not found", None
-    
-    if license.organization_token != org_token:
-        return False, "company token is invalid", None
-    
+
+    # Unknown key and wrong token get the same answer: a caller without the token learns
+    # nothing about which license keys exist.
+    if not license or not _same(license.organization_token, org_token):
+        return False, "License key or organization token is not valid", None
+
     if not license.is_active:
-        return False, "license is deactive", None
-    
+        return False, "This license has been revoked", None
+
     if license.expires_at < datetime.now(timezone.utc):
-        return False, "license has expierd", None
-    
-    if license.vm_fingerprint != vm_fingerprint:
-        return False, "VM fingerprint is not match", None
+        return False, "This license has expired", None
+
+    if not _same(license.vm_fingerprint, vm_fingerprint):
+        return False, "This license is activated on another machine", None
 
     license.last_validated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(license)
-    
+
     return True, "license is valid", license
 
 def heartbeat(db: Session, license_key: str, org_token: str, vm_fingerprint: str,
@@ -228,11 +233,9 @@ def heartbeat(db: Session, license_key: str, org_token: str, vm_fingerprint: str
     """
     license = get_license_by_key(db, license_key)
 
-    if not license:
-        return False, "license key has not found"
-
-    if license.organization_token != org_token or license.vm_fingerprint != vm_fingerprint:
-        return False, "faild to authintication"
+    if not license or not _same(license.organization_token, org_token) \
+            or not _same(license.vm_fingerprint, vm_fingerprint):
+        return False, "License key, organization token or machine is not valid"
 
     now = datetime.now(timezone.utc)
     license.last_heartbeat_at = now

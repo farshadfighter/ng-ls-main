@@ -15,10 +15,11 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from .. import crud, schemas
+from .. import audit, crud, schemas
+from ..core.security import request_ip
 from ..database import get_db
 from ..utils.license_token import SigningKeyMissing, TokenSigner, build_claims, get_signer, limits_of
 from ..utils.signing import verify_signature
@@ -26,6 +27,13 @@ from ..utils.signing import verify_signature
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/licenses", tags=["licenses"])
+
+
+def _audit(request: Request, action: str, data, outcome: str, message: str) -> None:
+    """Licensed installations (actor "client"): activations either way; refusals of validate and
+    heartbeat. The machine is identified by the start of its fingerprint."""
+    audit.record(action, outcome, actor="client", ip=request_ip(request), target=data.license_key[:64],
+                 detail={"message": message, "machine": (data.vm_fingerprint or "")[:16]})
 
 
 def require_signer() -> TokenSigner:
@@ -82,7 +90,7 @@ def _signed_response(signer: TokenSigner, typ: str, data, valid: bool, message: 
 
 
 @router.post("/activate", response_model=schemas.ValidationResponse)
-def activate_license(data: schemas.LicenseActivate, db: Session = Depends(get_db),
+def activate_license(data: schemas.LicenseActivate, request: Request, db: Session = Depends(get_db),
                      signer: TokenSigner = Depends(require_signer)):
     """Bind a license to the machine fingerprint the client computed, and return the organization
     token. Public: the license key itself is the credential. A rejection is HTTP 400.
@@ -93,6 +101,7 @@ def activate_license(data: schemas.LicenseActivate, db: Session = Depends(get_db
         db, data.license_key, data.vm_fingerprint, client_computed=bool(data.nonce)
     )
 
+    _audit(request, "client.activate", data, audit.SUCCESS if success else audit.FAILURE, message)
     if not success:
         raise HTTPException(status_code=400, detail=message)
 
@@ -103,6 +112,7 @@ def activate_license(data: schemas.LicenseActivate, db: Session = Depends(get_db
 @router.post("/validate", response_model=schemas.ValidationResponse)
 def validate_license(
     data: schemas.LicenseValidate,
+    request: Request,
     db: Session = Depends(get_db),
     x_timestamp: Optional[str] = Header(None),
     x_signature: Optional[str] = Header(None),
@@ -118,6 +128,7 @@ def validate_license(
         try:
             verify_request_signature(x_timestamp, x_signature, data)
         except HTTPException:
+            _audit(request, "client.validate", data, audit.FAILURE, "Invalid signature")
             return _signed_response(signer, "validate", data, False, "Invalid signature")
 
     success, message, license = crud.validate_license(
@@ -125,13 +136,14 @@ def validate_license(
     )
 
     if not success:
+        _audit(request, "client.validate", data, audit.FAILURE, message)
         return _signed_response(signer, "validate", data, False, message)
 
     return _signed_response(signer, "validate", data, True, message, license)
 
 
 @router.post("/heartbeat", response_model=schemas.HeartbeatResponse)
-def heartbeat(data: schemas.LicenseHeartbeat, db: Session = Depends(get_db),
+def heartbeat(data: schemas.LicenseHeartbeat, request: Request, db: Session = Depends(get_db),
               signer: TokenSigner = Depends(require_signer)):
     """Liveness ping from the client (hourly), with the number of assets it manages. A rejection
     is HTTP 400; success carries a signed token with the license's current state.
@@ -144,6 +156,7 @@ def heartbeat(data: schemas.LicenseHeartbeat, db: Session = Depends(get_db),
     )
 
     if not success:
+        _audit(request, "client.heartbeat", data, audit.FAILURE, message)
         raise HTTPException(status_code=400, detail=message)
 
     license = crud.get_license_by_key(db, data.license_key)

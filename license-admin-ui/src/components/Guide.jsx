@@ -7,7 +7,8 @@ import { ADDON, PLANS, fmtAssets, planLabel } from "../lib/plans.js";
 //   - app/plans.py              (the plan catalog)
 //   - app/utils/license_token.py (signed answers)
 //   - app/utils/signing.py      (HMAC request signing)
-//   - app/core/security.py      (admin JWT)
+//   - app/core/security.py      (admin sessions and roles)
+//   - app/accounts.py, app/audit.py (accounts, lockout, the audit trail)
 //   - app/models.py             (license fields, plans)
 export default function Guide() {
   const sections = [
@@ -16,6 +17,7 @@ export default function Guide() {
     { id: "token", label: "Token structure" },
     { id: "validation", label: "Validation flow" },
     { id: "security", label: "Security model" },
+    { id: "accounts", label: "Accounts & audit" },
     { id: "plans", label: "Plans & limits" },
   ];
 
@@ -167,10 +169,10 @@ X-Signature: <hex signature>`}</div>
           <h2>Security model</h2>
           <ul>
             <li>
-              <strong>Admin auth (this console)</strong> — username/password exchanged for a JWT
-              (HS256) that expires after 24h. The token is sent as a{" "}
-              <code className="inline-code">Bearer</code> header on every admin call and is required
-              for all license generation and management endpoints.
+              <strong>Admin auth (this console)</strong> — every person has an account of their own
+              (see Accounts &amp; audit). A sign-in opens a session at the server and returns a short
+              JWT (HS256) naming it; the session ends at sign-out, after 15 minutes without use, and
+              8 hours after sign-in at the latest.
             </li>
             <li>
               <strong>Signed client requests</strong> — HMAC-SHA256 keyed on the organization token,
@@ -200,6 +202,43 @@ X-Signature: <hex signature>`}</div>
               revocation is one-way from this console.
             </li>
           </ul>
+        </section>
+
+        <section id="accounts" className="guide-section">
+          <h2>Accounts &amp; audit</h2>
+          <h3>Roles</h3>
+          <ul>
+            <li><strong>Admin</strong> — everything: accounts (Users), permanent deletion of licenses.</li>
+            <li><strong>Operator</strong> — license work: generate, change plans, revoke, release machines,
+              offline files, the Test page.</li>
+            <li><strong>Auditor</strong> — reads licenses and the audit trail; changes nothing.</li>
+          </ul>
+          <p>The server checks the role on every call; the console only hides what a role cannot use.</p>
+          <h3>Passwords and sign-in</h3>
+          <ul>
+            <li>A new account, and one whose password an admin reset, has a temporary password: its owner
+              must choose their own at the next sign-in before anything else.</li>
+            <li>Passwords: at least 12 characters, three of lower case / upper case / digits / symbols, not
+              containing the user name. Stored as salted scrypt hashes.</li>
+            <li>After 5 failed sign-ins in a row an account is locked for 15 minutes (an admin can unlock
+              it on Users). Every refusal looks the same, so a sign-in attempt does not reveal whether an
+              account exists.</li>
+            <li>Changing a password signs out the account's other sessions; disabling an account or
+              resetting its password signs out all of them. Accounts are disabled, never deleted.</li>
+            <li>Locked out entirely? On the server:{" "}
+              <code className="inline-code">docker compose exec backend python -m app.cli reset-password NAME</code>{" "}
+              (also <code className="inline-code">create-user</code>, <code className="inline-code">unlock</code>,{" "}
+              <code className="inline-code">list-users</code>).</li>
+          </ul>
+          <h3>The audit trail</h3>
+          <p>
+            Every sign-in (and failure), account change, license change, offline file, portal order,
+            NGCorion activation and refused validation is recorded with who, when, from which address,
+            the target and the outcome. Entries cannot be changed or deleted — the database itself
+            refuses it. Auditors and admins read it on the Audit page and can export it as CSV (the
+            export is recorded too). Each entry also goes to the server log as one JSON line, for a
+            log collector.
+          </p>
         </section>
 
         <section id="plans" className="guide-section">

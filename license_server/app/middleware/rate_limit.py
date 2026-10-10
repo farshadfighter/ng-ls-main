@@ -1,13 +1,20 @@
 import logging
 
 import redis
-from fastapi import Request, HTTPException, status
+from fastapi import Request, status
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from ..core.config import settings
 from ..core.redis_client import redis_client
+from ..core.security import request_ip
 
 logger = logging.getLogger(__name__)
 
+# The client address is X-Real-IP, which nginx overwrites with the peer it saw
+# (the real client - with the Let's Encrypt setup, restored from Traefik's PROXY
+# header); never the left-most X-Forwarded-For entry, which a client can write
+# itself and so pick a fresh bucket for every request.
+#
 # Paths that bypass the per-IP limiter entirely.
 #
 # /internal/portal/* is exempt because it is not a public endpoint: it is
@@ -28,26 +35,29 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         if request.url.path.startswith(RATE_LIMIT_EXEMPT_PREFIXES):
             return await call_next(request)
-        
-        client_ip = request.client.host if request.client else "unknown"
+
+        client_ip = request_ip(request) or "unknown"
         key = f"ratelimit:{client_ip}"
-        
+
         try:
-            current = redis_client.get(key)
-            
-            if current is None:
-                redis_client.setex(key, 60, 1)
-            else:
-                current_count = int(current)
-                if current_count >= settings.RATE_LIMIT_PER_MINUTE:
-                    raise HTTPException(
-                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                        detail="Rate limit exceeded. Please try again later."
-                    )
-                redis_client.incr(key)
+            # One atomic step: count this request and (on the first one in the
+            # window) start the window. A separate GET then SETEX/INCR let two
+            # concurrent requests both see "under the limit".
+            pipe = redis_client.pipeline()
+            pipe.set(key, 0, ex=60, nx=True)
+            pipe.incr(key)
+            _, count = pipe.execute()
         except redis.RedisError as e:
             # If Redis is down, allow the request to proceed
             logger.warning(f"[RateLimit] Redis check failed, allowing request: {e}")
-        
+            count = 0
+
+        if count > settings.RATE_LIMIT_PER_MINUTE:
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={"detail": "Rate limit exceeded. Please try again later."},
+                headers={"Retry-After": "60"},
+            )
+
         response = await call_next(request)
         return response

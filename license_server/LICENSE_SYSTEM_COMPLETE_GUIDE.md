@@ -245,10 +245,14 @@ nano .env
 Edit `.env`:
 ```env
 DATABASE_URL=postgresql://license_user:secure_password@localhost:5432/license_db
-SECRET_KEY=your-very-long-random-secret-key-here
+SECRET_KEY=your-very-long-random-secret-key-here   # at least 32 characters
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=MySecurePassword123
 ```
+
+`ADMIN_USERNAME` / `ADMIN_PASSWORD` only make the **first** admin account, at the
+first start; its owner must change the password at first login. Everyone
+else gets their own account in the admin console (Users).
 
 4. **Run Migrations**
 ```bash

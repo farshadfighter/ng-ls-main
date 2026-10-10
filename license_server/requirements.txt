@@ -1,18 +1,18 @@
-fastapi==0.115.0
-uvicorn[standard]==0.30.0
-sqlalchemy==2.0.35
-psycopg2-binary==2.9.10
-pydantic[email]==2.9.0
-email-validator
-pydantic-settings==2.5.0
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-python-multipart==0.0.9
-cryptography==43.0.0
-redis==5.0.1
-alembic==1.13.1
-requests==2.31.0
-# TestClient (starlette) needs httpx. Used by tests/test_portal_auth.py; not
-# imported by the app itself.
-httpx==0.27.2
-python-dotenv==1.0.0
+# Runtime dependencies of the license server, pinned. Kept in step with the
+# versions NGCorion ships (its uv.lock) where the two overlap; the CI job runs
+# pip-audit against this file.
+fastapi==0.142.2
+uvicorn[standard]==0.52.0
+sqlalchemy==2.0.51
+psycopg2-binary==2.9.13
+pydantic[email]==2.13.4
+pydantic-settings==2.14.2
+# JWTs (admin sessions, portal service tokens). PyJWT replaces python-jose,
+# which is unmaintained and pulls in the vulnerable `ecdsa` package.
+PyJWT==2.15.1
+cryptography==50.0.2
+redis==8.1.0
+alembic==1.20.0
+requests==2.34.2
+# Reads .env when the server runs outside docker (pydantic-settings env_file).
+python-dotenv==1.2.4

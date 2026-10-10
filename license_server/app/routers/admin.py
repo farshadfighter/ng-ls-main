@@ -1,96 +1,56 @@
-import logging
+"""
+The admin console's license API. Sign-in is in admin_auth.py, accounts in admin_users.py, the
+audit trail in admin_audit.py.
 
-import requests
-from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.orm import Session
+Roles (app/core/security.py): reading needs any role, changing a license needs operator or admin,
+deleting one for good needs admin. Every change is written to the audit trail (app/audit.py).
+"""
+import logging
 from typing import List
-from .. import crud, offline, plans, schemas
-from ..utils.license_token import SigningKeyMissing, build_claims, get_signer
-from ..core.security import get_current_admin, create_access_token, verify_admin_credentials
-from ..core.config import settings
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy.orm import Session
+
+from .. import audit, crud, offline, plans, schemas
+from ..core.security import AdminPrincipal, request_ip, require_admin, require_operator, require_reader
 from ..database import get_db
-from pydantic import BaseModel, ConfigDict, Field
-from datetime import timedelta
+from ..utils.license_token import SigningKeyMissing, build_claims, get_signer
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
-TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
-class LoginRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+def _audit(request: Request, admin: AdminPrincipal, action: str, target: str, outcome: str = audit.SUCCESS,
+           detail=None) -> None:
+    audit.record(action, outcome, actor=admin.username, role=admin.role, ip=request_ip(request),
+                 target=target, detail=detail)
 
-    username: str
-    password: str
-    cf_turnstile_response: str = Field(default="", alias="cf-turnstile-response")
-
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str
-
-def verify_turnstile(token: str, remote_ip: str | None) -> None:
-    """Reject the request unless Cloudflare confirms the Turnstile token.
-
-    Fails closed: a missing secret, an unreachable siteverify endpoint or a
-    malformed reply all refuse the login.
-    """
-    if not settings.TURNSTILE_SECRET_KEY:
-        logger.error("TURNSTILE_SECRET_KEY is not set; refusing admin login")
-        raise HTTPException(status_code=503, detail="Login verification is not configured")
-    if not token:
-        raise HTTPException(status_code=400, detail="Please complete the human verification")
-
-    payload = {"secret": settings.TURNSTILE_SECRET_KEY, "response": token}
-    if remote_ip:
-        payload["remoteip"] = remote_ip
-    try:
-        resp = requests.post(TURNSTILE_VERIFY_URL, data=payload, timeout=10)
-        result = resp.json()
-    except (requests.RequestException, ValueError) as exc:
-        logger.error("Turnstile siteverify failed: %s", exc)
-        raise HTTPException(status_code=503, detail="Could not verify the login challenge, try again")
-
-    if not result.get("success"):
-        logger.warning("Turnstile rejected admin login: %s", result.get("error-codes"))
-        raise HTTPException(status_code=400, detail="Human verification failed, please try again")
-
-@router.post("/login", response_model=TokenResponse)
-def login(credentials: LoginRequest, request: Request):
-    """Admin login endpoint - returns JWT token"""
-    # Checked before the credentials so failed challenges never reach them.
-    verify_turnstile(
-        credentials.cf_turnstile_response,
-        request.client.host if request.client else None,
-    )
-    if not verify_admin_credentials(credentials.username, credentials.password):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    
-    access_token = create_access_token(
-        data={"sub": credentials.username},
-        expires_delta=timedelta(hours=settings.JWT_EXPIRE_HOURS)
-    )
-    return TokenResponse(access_token=access_token, token_type="bearer")
 
 @router.get("/plans")
-def list_plans(admin: str = Depends(get_current_admin)):
+def list_plans(admin: AdminPrincipal = Depends(require_reader)):
     """The plan catalog (app/plans.py): SKUs, names, base asset limits, terms, and the add-on."""
     return plans.catalog()
 
 @router.post("/licenses", response_model=schemas.LicenseResponse)
 def create_license(
     license_data: schemas.LicenseCreate,
+    request: Request,
     db: Session = Depends(get_db),
-    admin: str = Depends(get_current_admin)
+    admin: AdminPrincipal = Depends(require_operator)
 ):
-    return crud.create_license(db, license_data)
+    license = crud.create_license(db, license_data)
+    _audit(request, admin, "license.create", license.license_key,
+           detail={"plan": license.plan_code, "addon_packs": license.addon_packs,
+                   "organization": license.organization_name, "offline": bool(license.offline_allowed)})
+    return license
 
 @router.get("/licenses", response_model=List[schemas.LicenseResponse])
 def list_licenses(
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=1000),
     db: Session = Depends(get_db),
-    admin: str = Depends(get_current_admin)
+    admin: AdminPrincipal = Depends(require_reader)
 ):
     return crud.get_all_licenses(db, skip, limit)
 
@@ -98,7 +58,7 @@ def list_licenses(
 def get_license(
     license_key: str,
     db: Session = Depends(get_db),
-    admin: str = Depends(get_current_admin)
+    admin: AdminPrincipal = Depends(require_reader)
 ):
     license = crud.get_license_by_key(db, license_key)
     if not license:
@@ -108,19 +68,22 @@ def get_license(
 @router.delete("/licenses/{license_key}")
 def deactivate_license(
     license_key: str,
+    request: Request,
     db: Session = Depends(get_db),
-    admin: str = Depends(get_current_admin)
+    admin: AdminPrincipal = Depends(require_operator)
 ):
     success = crud.deactivate_license(db, license_key)
     if not success:
         raise HTTPException(status_code=404, detail="License not found")
+    _audit(request, admin, "license.revoke", license_key)
     return {"message": "License deactivated successfully"}
 
 @router.delete("/licenses/{license_key}/permanent")
 def delete_license(
     license_key: str,
+    request: Request,
     db: Session = Depends(get_db),
-    admin: str = Depends(get_current_admin)
+    admin: AdminPrincipal = Depends(require_admin)
 ):
     """Permanently delete a license record.
 
@@ -130,14 +93,16 @@ def delete_license(
     success = crud.delete_license(db, license_key)
     if not success:
         raise HTTPException(status_code=404, detail="License not found")
+    _audit(request, admin, "license.delete", license_key)
     return {"message": "License deleted permanently"}
 
 
 @router.post("/licenses/{license_key}/reset-binding", response_model=schemas.LicenseResponse)
 def reset_license_binding(
     license_key: str,
+    request: Request,
     db: Session = Depends(get_db),
-    admin: str = Depends(get_current_admin)
+    admin: AdminPrincipal = Depends(require_operator)
 ):
     """Release a license from the machine it is bound to, so the customer can activate it on a
     new or reinstalled server. The old machine is refused from its next validation on.
@@ -145,7 +110,7 @@ def reset_license_binding(
     license = crud.reset_binding(db, license_key)
     if license is None:
         raise HTTPException(status_code=404, detail="License not found")
-    logger.info("[Admin] %s released license %s from its machine", admin, license_key)
+    _audit(request, admin, "license.release_machine", license_key)
     return license
 
 
@@ -153,8 +118,9 @@ def reset_license_binding(
 def change_license_plan(
     license_key: str,
     change: schemas.PlanChange,
+    request: Request,
     db: Session = Depends(get_db),
-    admin: str = Depends(get_current_admin)
+    admin: AdminPrincipal = Depends(require_operator)
 ):
     """Change a license's plan and/or its add-on packs (an upgrade, add-ons bought later, or
     correcting a license the old server downgraded for being offline). The term stays. NGCorion
@@ -168,8 +134,8 @@ def change_license_plan(
         raise HTTPException(status_code=422, detail=str(exc))
     if license is None:
         raise HTTPException(status_code=404, detail="License not found")
-    logger.info("[Admin] %s set license %s to %s with %s add-on pack(s)",
-                admin, license_key, license.plan_code, license.addon_packs)
+    _audit(request, admin, "license.change_plan", license_key,
+           detail={"plan": license.plan_code, "addon_packs": license.addon_packs})
     return license
 
 
@@ -179,15 +145,16 @@ def change_license_plan(
 def set_license_offline(
     license_key: str,
     body: schemas.OfflineToggle,
+    request: Request,
     db: Session = Depends(get_db),
-    admin: str = Depends(get_current_admin)
+    admin: AdminPrincipal = Depends(require_operator)
 ):
     """Mark a license offline (its NGCorion never reaches this server) or not. Turning it off only
     stops new files; one already issued works until its valid_until."""
     license = crud.set_offline_allowed(db, license_key, body.allowed)
     if license is None:
         raise HTTPException(status_code=404, detail="License not found")
-    logger.info("[Admin] %s set offline=%s on license %s", admin, body.allowed, license_key)
+    _audit(request, admin, "license.offline_option", license_key, detail={"allowed": body.allowed})
     return license
 
 
@@ -195,15 +162,16 @@ def set_license_offline(
 def issue_offline_license_file(
     license_key: str,
     body: schemas.OfflineFileRequest,
+    request: Request,
     db: Session = Depends(get_db),
-    admin: str = Depends(get_current_admin)
+    admin: AdminPrincipal = Depends(require_operator)
 ):
     """Sign an offline license file for the request file the customer's NGCorion made: bound to
     that machine, with the license's plan and asset limit, valid for one year (or until the
     license expires, if sooner). 422 for a file that is not a request, 409 when the license
     cannot have one (not offline, revoked, expired, bound to another machine)."""
     try:
-        request = offline.parse_request(body.request)
+        req = offline.parse_request(body.request)
     except offline.InvalidOfflineRequest as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     try:
@@ -212,18 +180,22 @@ def issue_offline_license_file(
         logger.error("[License] %s", exc)
         raise HTTPException(status_code=503, detail="License signing is not configured on the license server")
     try:
-        license, until = crud.issue_offline_license(db, license_key, request, issued_by=admin)
+        license, until = crud.issue_offline_license(db, license_key, req, issued_by=admin.username)
     except crud.OfflineIssueRefused as exc:
         status = 404 if str(exc) == "License not found" else 409
+        if status == 409:
+            _audit(request, admin, "license.offline_file", license_key, audit.FAILURE,
+                   detail={"reason": str(exc), "machine": req.vm_fingerprint[:16]})
         raise HTTPException(status_code=status, detail=str(exc))
 
     token = signer.sign(build_claims(
-        "offline", license_key=license.license_key, vm_fingerprint=request.vm_fingerprint,
-        valid=True, message="offline license", nonce=request.nonce, license=license,
+        "offline", license_key=license.license_key, vm_fingerprint=req.vm_fingerprint,
+        valid=True, message="offline license", nonce=req.nonce, license=license,
         extra={"offline_until": int(until.timestamp())},
     ))
-    logger.info("[Admin] %s issued an offline license file for %s, valid until %s",
-                admin, license_key, until.isoformat())
+    _audit(request, admin, "license.offline_file", license_key,
+           detail={"valid_until": until.isoformat(), "machine": req.vm_fingerprint[:16],
+                   "reported_assets": req.asset_count})
     return schemas.OfflineFileResponse(
         filename=offline.file_name(license.organization_name, license.license_key),
         content=offline.license_file(token),
@@ -236,7 +208,7 @@ def issue_offline_license_file(
 def inspect_offline_file(
     body: schemas.OfflineInspectRequest,
     db: Session = Depends(get_db),
-    admin: str = Depends(get_current_admin)
+    admin: AdminPrincipal = Depends(require_reader)
 ):
     """Check an offline file without changing anything (the Test page). A request file: what it
     asks for and whether a license file could be issued for it. A license file: what it grants,
@@ -257,7 +229,7 @@ def inspect_offline_file(
 def list_offline_issues(
     license_key: str,
     db: Session = Depends(get_db),
-    admin: str = Depends(get_current_admin)
+    admin: AdminPrincipal = Depends(require_reader)
 ):
     """The offline license files issued for a license, newest first."""
     license = crud.get_license_by_key(db, license_key)

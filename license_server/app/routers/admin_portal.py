@@ -16,8 +16,8 @@ carries synced_at and POST /sync exists.
 
 A separate router from app/routers/admin.py, mounted under the same
 /api/admin prefix, purely to keep license administration and portal-cache
-browsing in separate files. Same auth: every route depends on
-get_current_admin, so these need an admin UI session token, NOT a portal
+browsing in separate files. Same auth: every route needs an admin console
+session (any role reads; starting a sync needs operator), NOT a portal
 token. They are ordinary admin endpoints, reachable through nginx's public
 /api/ block, and have nothing to do with /internal/portal/*.
 """
@@ -25,16 +25,16 @@ import logging
 import uuid
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from .. import models, schemas
+from .. import audit, models, schemas
 from ..core import portal_client
 from ..core.config import settings
 from ..core.portal_client import PortalClientError
 from ..core.portal_sync import SyncAlreadyRunning, syncer
-from ..core.security import get_current_admin
+from ..core.security import AdminPrincipal, request_ip, require_operator, require_reader
 from ..database import get_db
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/admin/portal",
     tags=["admin-portal"],
-    dependencies=[Depends(get_current_admin)],
+    dependencies=[Depends(require_reader)],
 )
 
 
@@ -177,7 +177,7 @@ def list_portal_orders(
 
 
 @router.post("/sync", response_model=schemas.PortalSyncResultResponse)
-def trigger_sync():
+def trigger_sync(request: Request, admin: AdminPrincipal = Depends(require_operator)):
     """Sync users and orders from the portal now, and report the outcome.
 
     Synchronous, unlike the license-event notifier: an admin who presses
@@ -204,7 +204,10 @@ def trigger_sync():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         )
-    return result.as_dict()
+    outcome = result.as_dict()
+    audit.record("portal.sync", audit.SUCCESS if outcome.get("ok") else audit.FAILURE,
+                 actor=admin.username, role=admin.role, ip=request_ip(request))
+    return outcome
 
 
 @router.get("/sync/status", response_model=schemas.PortalSyncStatusResponse)

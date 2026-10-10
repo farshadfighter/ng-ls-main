@@ -46,7 +46,7 @@ async function parseError(res) {
   return detail || res.statusText || `Request failed (${res.status})`;
 }
 
-async function request(method, path, { body, auth = false } = {}) {
+async function request(method, path, { body, auth = false, raw = false } = {}) {
   const headers = {};
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (auth) {
@@ -78,13 +78,17 @@ async function request(method, path, { body, auth = false } = {}) {
 
   if (res.status === 204) return null;
   const text = await res.text();
+  if (raw) return text;
   return text ? JSON.parse(text) : null;
 }
 
 export const api = {
   get: (path, opts) => request("GET", path, opts),
   post: (path, body, opts) => request("POST", path, { ...opts, body }),
+  patch: (path, body, opts) => request("PATCH", path, { ...opts, body }),
   del: (path, opts) => request("DELETE", path, opts),
+  // A non-JSON body (CSV) as text.
+  text: (path, opts) => request("GET", path, { ...opts, raw: true }),
 };
 
 // ---------- Endpoint helpers ----------
@@ -95,6 +99,32 @@ export const adminLogin = (username, password, turnstileToken) =>
     password,
     "cf-turnstile-response": turnstileToken,
   });
+
+export const adminLogout = () => api.post("/api/admin/logout", undefined, { auth: true });
+export const getMe = () => api.get("/api/admin/me", { auth: true });
+export const changeMyPassword = (current_password, new_password) =>
+  api.post("/api/admin/me/password", { current_password, new_password }, { auth: true });
+export const getLoginBanner = () => api.get("/api/admin/login-banner");
+
+// Admin accounts (admin role).
+export const listUsers = () => api.get("/api/admin/users", { auth: true });
+export const createUser = (payload) => api.post("/api/admin/users", payload, { auth: true });
+export const updateUser = (id, change) => api.patch(`/api/admin/users/${id}`, change, { auth: true });
+export const resetUserPassword = (id, password) =>
+  api.post(`/api/admin/users/${id}/reset-password`, { password }, { auth: true });
+export const unlockUser = (id) => api.post(`/api/admin/users/${id}/unlock`, undefined, { auth: true });
+
+// The audit trail (auditor and admin roles).
+const query = (params) => {
+  const q = new URLSearchParams();
+  Object.entries(params || {}).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") q.set(k, v);
+  });
+  const text = q.toString();
+  return text ? `?${text}` : "";
+};
+export const searchAudit = (params) => api.get(`/api/admin/audit${query(params)}`, { auth: true });
+export const exportAudit = (params) => api.text(`/api/admin/audit/export.csv${query(params)}`, { auth: true });
 
 export const createLicense = (payload) =>
   api.post("/api/admin/licenses", payload, { auth: true });

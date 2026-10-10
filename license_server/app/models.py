@@ -32,7 +32,7 @@ class LicenseSource(str, enum.Enum):
 
 class License(Base):
     __tablename__ = "licenses"
-    
+
     __table_args__ = (
         Index('idx_license_key_active', 'license_key', 'is_active'),
         Index('idx_org_token_active', 'organization_token', 'is_active'),
@@ -60,15 +60,15 @@ class License(Base):
             postgresql_where=text("source = 'portal_auto'"),
         ),
     )
-    
+
     id = Column(Integer, primary_key=True, index=True)
     license_key = Column(String, unique=True, index=True, nullable=False)
     organization_token = Column(String, unique=True, index=True, nullable=False)
-    
+
     customer_name = Column(String, nullable=False)
     customer_email = Column(String, nullable=False)
     organization_name = Column(String, nullable=False)
-    
+
     # The plan's SKU (app/plans.py), e.g. "NGC-BUS-250-1Y". A plain string,
     # not a native enum, so a new plan is a catalog entry and not a migration.
     plan_code = Column(String(32), nullable=False)
@@ -93,7 +93,7 @@ class License(Base):
     # licensed machine (signed-licensing releases); NULL = a legacy binding to
     # the license server's own fingerprint, which may move once. Migration 005.
     fingerprint_source = Column(String(16), nullable=True)
-    
+
     is_active = Column(Boolean, default=True)
 
     # Offline (air-gapped) license: the customer's NGCorion never reaches this
@@ -108,7 +108,7 @@ class License(Base):
     # falls back to the pilot entitlement on its own, and only until it
     # reaches this server again.
     is_pilot_mode = Column(Boolean, default=False)
-    
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     activated_at = Column(DateTime(timezone=True), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
@@ -245,3 +245,113 @@ class PortalOrderCache(Base):
     portal_created_at = Column(DateTime(timezone=True), nullable=True)
     raw = Column(JSONB, nullable=True)
     synced_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# ---------------------------------------------------------------------------
+# Admin accounts, sessions and the audit trail (migration 008).
+#
+# Every person who uses the admin console has an account of their own, so each
+# action is attributable to one person (the audit trail records who did what).
+# Up to 008 there was a single shared admin from the environment.
+# ---------------------------------------------------------------------------
+
+class AdminRole(str, enum.Enum):
+    """What an admin account may do (app/core/security.py, ROLE_RANK).
+
+    ADMIN     everything, including accounts and permanent deletion
+    OPERATOR  license work: create, change, revoke, offline files
+    AUDITOR   read-only: licenses and the audit trail
+    """
+    ADMIN = "admin"
+    OPERATOR = "operator"
+    AUDITOR = "auditor"
+
+
+class AdminUser(Base):
+    __tablename__ = "admin_users"
+
+    id = Column(Integer, primary_key=True)
+    # Stored lower case; unique.
+    username = Column(String(64), nullable=False, unique=True)
+    full_name = Column(String(255), nullable=True)
+    email = Column(String(255), nullable=True)
+    role = Column(String(16), nullable=False, default=AdminRole.OPERATOR.value)
+    # app/core/passwords.py: scrypt with a per-password salt.
+    password_hash = Column(String(255), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    # Set for an account created or reset by someone else: its owner must pick
+    # their own password before doing anything else.
+    must_change_password = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    # Failed logins since the last success, and the end of the lockout they
+    # caused (app/accounts.py: MAX_FAILED_LOGINS, LOCKOUT).
+    failed_logins = Column(Integer, nullable=False, default=0, server_default="0")
+    locked_until = Column(DateTime(timezone=True), nullable=True)
+    last_login_at = Column(DateTime(timezone=True), nullable=True)
+    last_login_ip = Column(String(64), nullable=True)
+    password_changed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_by = Column(String(64), nullable=True)
+
+
+class AdminSession(Base):
+    """One login. The JWT the browser holds names it (claim `sid`); the session decides whether
+    the JWT still works: logout and account changes revoke it, and it ends after
+    ADMIN_IDLE_TIMEOUT_MINUTES without use or JWT_EXPIRE_HOURS after login."""
+
+    __tablename__ = "admin_sessions"
+    __table_args__ = (Index("idx_admin_session_user", "user_id"),)
+
+    id = Column(String(64), primary_key=True)  # random, 256 bits
+    user_id = Column(Integer, ForeignKey("admin_users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_seen_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    ip = Column(String(64), nullable=True)
+    user_agent = Column(String(255), nullable=True)
+
+
+class AuditEvent(Base):
+    """The audit trail: who did what, to what, from where, when, and whether it worked.
+
+    Append-only. The application has no code path that changes or deletes a row, and the
+    database refuses it too: a trigger (AUDIT_GUARD_SQL, created by migration 008 and, for a
+    database made by create_all, by the listener below) raises on UPDATE and DELETE.
+    """
+
+    __tablename__ = "audit_events"
+    __table_args__ = (
+        Index("idx_audit_at", "at"),
+        Index("idx_audit_actor", "actor"),
+        Index("idx_audit_action", "action"),
+    )
+
+    id = Column(BigInteger, primary_key=True)
+    at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    # Who: an admin user name, "portal", "client" (a licensed NGCorion) or "system".
+    actor = Column(String(64), nullable=False)
+    actor_role = Column(String(16), nullable=True)
+    ip = Column(String(64), nullable=True)
+    # What, as "area.verb": auth.login, license.create, user.update, ...
+    action = Column(String(64), nullable=False)
+    # To what: a license key, a user name, ...
+    target = Column(String(255), nullable=True)
+    # "success" or "failure"
+    outcome = Column(String(16), nullable=False)
+    detail = Column(JSONB, nullable=True)
+
+
+AUDIT_GUARD_SQL = """
+CREATE OR REPLACE FUNCTION audit_events_append_only() RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'audit_events is append-only';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS audit_events_no_change ON audit_events;
+CREATE TRIGGER audit_events_no_change BEFORE UPDATE OR DELETE ON audit_events
+    FOR EACH ROW EXECUTE FUNCTION audit_events_append_only();
+"""
+
+from sqlalchemy import DDL, event  # noqa: E402
+
+event.listen(AuditEvent.__table__, "after_create", DDL(AUDIT_GUARD_SQL))

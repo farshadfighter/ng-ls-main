@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost/test")
-os.environ.setdefault("SECRET_KEY", "test-secret-key")
+os.environ.setdefault("SECRET_KEY", "test-secret-key-0123456789abcdef-0123456789")
 os.environ.setdefault("TURNSTILE_SECRET_KEY", "test-turnstile-secret")
 os.environ.setdefault("ADMIN_USERNAME", "test-admin")
 os.environ.setdefault("ADMIN_PASSWORD", "correct-horse-battery-staple")
@@ -31,9 +31,9 @@ os.environ["PORTAL_JWT_SECRET"] = PORTAL_SECRET
 os.environ["PORTAL_BASE_URL"] = "http://172.16.120.80"
 
 import requests  # noqa: E402
-from jose import jwt  # noqa: E402
+import jwt  # noqa: E402
 
-from app.core import portal_client, portal_sync  # noqa: E402
+from app.core import portal_client  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.core.portal_client import PortalClientError, extract_records  # noqa: E402
 from app.core.portal_sync import (  # noqa: E402
@@ -193,7 +193,7 @@ class ClientAuthTest(unittest.TestCase):
         from app.core.portal_events import create_event_token
 
         for token in (create_event_token(), portal_client.create_portal_token()):
-            claims = jwt.get_unverified_claims(token)
+            claims = jwt.decode(token, options={"verify_signature": False})
             self.assertEqual(claims["iss"], "license-server")
             self.assertEqual(claims["aud"], "portal")
 

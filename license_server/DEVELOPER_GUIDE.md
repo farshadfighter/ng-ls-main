@@ -119,6 +119,12 @@ Response:
 
 ### Method 2: Using Python Script
 
+> **Note.** Admin sign-in now needs a personal account, a Cloudflare
+> Turnstile token and (for a new account) a password change, so the script
+> below no longer works unattended. For automated license creation use the
+> portal integration, `POST /internal/portal/licenses` (signed service tokens,
+> IP allow list; see `app/routers/internal_portal.py`).
+
 Create `generate_license.py`:
 
 ```python

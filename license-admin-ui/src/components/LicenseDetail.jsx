@@ -8,6 +8,7 @@ import { fmtDate, relativeTime, isExpired } from "../lib/format.js";
 import UsageBars from "./UsageBars.jsx";
 import StatusBadge from "./StatusBadge.jsx";
 import { CopyRow } from "./CredentialCard.jsx";
+import { canWrite, isAdmin } from "../auth/auth.js";
 
 // Detail modal for a single license: identity, status, usage bars, expiry
 // countdown, timestamps and the bound VM fingerprint. Revoke lives here too.
@@ -103,9 +104,9 @@ export default function LicenseDetail({ license, onClose, onRevoked, onDeleted, 
           <h4 style={{ margin: "22px 0 12px" }}>Assets</h4>
           <UsageBars license={license} />
 
-          <PlanEditor license={license} onUpdated={onUpdated} />
+          {canWrite() && <PlanEditor license={license} onUpdated={onUpdated} />}
 
-          <OfflineSection license={license} onUpdated={onUpdated} />
+          <OfflineSection license={license} onUpdated={onUpdated} readOnly={!canWrite()} />
 
           <h4 style={{ margin: "22px 0 10px" }}>Details</h4>
           <dl className="kv">
@@ -140,7 +141,7 @@ export default function LicenseDetail({ license, onClose, onRevoked, onDeleted, 
           </dl>
         </div>
 
-        <div className="modal-foot">
+        {canWrite() && <div className="modal-foot">
           <button
             disabled
             title="The license server API has no reactivate endpoint (DELETE only deactivates). Reactivation is not supported."
@@ -162,15 +163,15 @@ export default function LicenseDetail({ license, onClose, onRevoked, onDeleted, 
           >
             {revoking ? "Revoking…" : license.is_active ? "Revoke" : "Revoked"}
           </button>
-          <button
+          {isAdmin() && <button
             className="danger"
             onClick={handleDelete}
             disabled={revoking || deleting}
             title="Delete permanently (removes from database)"
           >
             {deleting ? "Deleting…" : "Delete"}
-          </button>
-        </div>
+          </button>}
+        </div>}
       </div>
     </div>
   );
@@ -253,7 +254,7 @@ function PlanEditor({ license, onUpdated }) {
 // request file (License page → offline activation); this signs a license file for it, bound to
 // that machine and valid one year (never past the license's expiry). A file cannot be revoked
 // before it ends, so the list of issued files is the record of what is out there.
-function OfflineSection({ license, onUpdated }) {
+function OfflineSection({ license, onUpdated, readOnly = false }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [requestText, setRequestText] = useState("");
@@ -311,7 +312,7 @@ function OfflineSection({ license, onUpdated }) {
       <h4 style={{ margin: "22px 0 10px" }}>Offline license</h4>
       {error && <div className="banner error">{error}</div>}
       <label className="checkline">
-        <input type="checkbox" checked={!!license.offline_allowed} disabled={busy} onChange={toggle} />
+        <input type="checkbox" checked={!!license.offline_allowed} disabled={busy || readOnly} onChange={toggle} />
         <span>
           <strong>Offline (air-gapped)</strong> — runs on a signed license file instead of activation and
           heartbeats.
@@ -326,6 +327,7 @@ function OfflineSection({ license, onUpdated }) {
               ({relativeTime(license.offline_valid_until)}).
             </p>
           )}
+          {!readOnly && <>
           <p className="note" style={{ margin: "0 0 8px" }}>
             Upload or paste the request file the customer made on NGCorion's License page. The license
             file you get back is bound to that machine and valid one year (never past the license's
@@ -354,6 +356,7 @@ function OfflineSection({ license, onUpdated }) {
               </button>
             </div>
           )}
+          </>}
           {issues.length > 0 && (
             <div className="table-wrap" style={{ marginTop: 14 }}>
               <table>

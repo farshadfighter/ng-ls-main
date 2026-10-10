@@ -28,12 +28,12 @@ def verify_signature(
         request_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
         current_time = datetime.now(timezone.utc)
         age = (current_time - request_time).total_seconds()
-        
+
         if abs(age) > max_age_seconds:
             return False
     except (ValueError, AttributeError):
         return False
-    
+
     # Verify signature
     expected_signature = generate_signature(data, secret, timestamp)
     return hmac.compare_digest(signature, expected_signature)

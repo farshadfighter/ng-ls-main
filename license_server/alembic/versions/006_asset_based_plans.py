@@ -80,11 +80,12 @@ def upgrade() -> None:
 
     code = " ".join(f"WHEN '{old}' THEN {_sql(new)}" for old, (new, _) in LEGACY.items())
     limit = " ".join(f"WHEN '{old}' THEN {_sql(n)}" for old, (_, n) in LEGACY.items())
+    # Built only from the LEGACY constant above; no outside input.
     op.execute(f"""
         UPDATE licenses SET
             plan_code = CASE plan_type::text {code} ELSE 'NGC-PILOT-5-1M' END,
             max_assets = CASE plan_type::text {limit} ELSE 5 END
-    """)
+    """)  # noqa: S608
 
     # Pilot rows with a paid plan's term: most likely downgraded by the old
     # server for being offline. Their real plan is lost; an admin has to set it.
@@ -118,12 +119,13 @@ def downgrade() -> None:
 
     label = " ".join(f"WHEN '{c}' THEN '{old}'" for c, (old, _) in BACK.items())
     quota = " ".join(f"WHEN '{c}' THEN {_sql(n)}" for c, (_, n) in BACK.items())
+    # Built only from the BACK constant above; no outside input.
     op.execute(f"""
         UPDATE licenses SET
             plan_type = (CASE plan_code {label} ELSE 'PILOT' END)::plantype,
             max_audits = CASE plan_code {quota} ELSE 2 END,
             max_hardens = CASE plan_code {quota} ELSE 2 END
-    """)
+    """)  # noqa: S608
     op.alter_column('licenses', 'plan_type', nullable=False)
 
     for column in ('reported_assets_at', 'reported_assets', 'addon_packs', 'max_assets', 'plan_code'):

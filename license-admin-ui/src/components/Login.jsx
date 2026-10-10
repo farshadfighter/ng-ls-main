@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { login } from "../auth/auth.js";
+import { getLoginBanner } from "../api/client.js";
 
 const TURNSTILE_SITE_KEY =
   import.meta.env.VITE_TURNSTILE_SITE_KEY || "0x4AAAAAAE4jLGhJo1wHHnwA";
 
-export default function Login({ onSuccess }) {
+export default function Login({ onSuccess, notice = "" }) {
+  const [banner, setBanner] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -12,6 +14,11 @@ export default function Login({ onSuccess }) {
   const [turnstileToken, setTurnstileToken] = useState("");
   const turnstileContainer = useRef(null);
   const turnstileWidget = useRef(null);
+
+  // The notice everyone sees before signing in (ADMIN_LOGIN_BANNER on the server).
+  useEffect(() => {
+    getLoginBanner().then((r) => setBanner(r?.banner || "")).catch(() => setBanner(""));
+  }, []);
 
   // The Turnstile script is loaded async from index.html with render=explicit,
   // so it may not be ready on first mount: render now or once it loads.
@@ -75,6 +82,8 @@ export default function Login({ onSuccess }) {
           <div className="tag">Admin Console</div>
         </div>
 
+        {banner && <div className="banner warn login-notice" role="note">{banner}</div>}
+        {notice && !error && <div className="banner info">{notice}</div>}
         {error && <div className="banner error">{error}</div>}
 
         <form onSubmit={handleSubmit}>
@@ -110,9 +119,10 @@ export default function Login({ onSuccess }) {
         </form>
 
         <p className="note" style={{ marginTop: 18, marginBottom: 0 }}>
-          Uses the license server admin credentials
-          (<code className="inline-code">ADMIN_USERNAME</code> /{" "}
-          <code className="inline-code">ADMIN_PASSWORD</code>).
+          Your own account on this server. The first account comes from{" "}
+          <code className="inline-code">ADMIN_USERNAME</code> /{" "}
+          <code className="inline-code">ADMIN_PASSWORD</code> and must change its password at first
+          login; further accounts are made under Users.
         </p>
       </div>
     </div>

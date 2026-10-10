@@ -1,18 +1,33 @@
 import ipaddress
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 from typing import Optional
 
 class Settings(BaseSettings):
     # Database
     DATABASE_URL: str
-    
-    # Security
+
+    # Security. SECRET_KEY signs admin console session tokens (HS256).
     SECRET_KEY: str
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-    JWT_EXPIRE_HOURS: int = 24
-    
+    # Admin sessions (app/core/security.py): a session ends this long after
+    # login at the latest, and after ADMIN_IDLE_TIMEOUT_MINUTES without use.
+    JWT_EXPIRE_HOURS: int = 8
+    ADMIN_IDLE_TIMEOUT_MINUTES: int = 15
+    # Failed logins (app/accounts.py): after this many in a row the account is
+    # locked for ADMIN_LOCKOUT_MINUTES (an admin can unlock it sooner).
+    ADMIN_MAX_FAILED_LOGINS: int = 5
+    ADMIN_LOCKOUT_MINUTES: int = 15
+    # Shown on the login page before anyone signs in.
+    ADMIN_LOGIN_BANNER: str = (
+        "Authorised use only. This system is the NGCorion license server. Every action is "
+        "recorded with your user name and address. Unauthorised access is prohibited and may "
+        "be prosecuted."
+    )
+    # FastAPI's /docs, /redoc and /openapi.json. Off in production: the API
+    # description is of no use to anyone but an attacker there.
+    ENABLE_API_DOCS: bool = False
+
     # Redis
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
@@ -21,13 +36,13 @@ class Settings(BaseSettings):
     # which is fine for a local dev Redis with no requirepass set but wrong for
     # the compose stack, where docker-compose.yml requires this var.
     REDIS_PASSWORD: Optional[str] = None
-    
+
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = 60
-    
+
     # API
     API_V1_PREFIX: str = "/api"
-    
+
     # Ed25519 key that signs every licensing answer (base64 of the 32-byte seed;
     # make one with scripts/generate_signing_key.py). NGCorion only trusts
     # answers signed by a key whose public half is built into its code, so a
@@ -37,9 +52,12 @@ class Settings(BaseSettings):
     # licenses.
     LICENSE_SIGNING_PRIVATE_KEY: Optional[str] = None
 
-    # Admin
+    # The first admin account, made at start-up when there is none yet
+    # (app/accounts.py: bootstrap_first_admin). It must change its password at
+    # first login; after that these two are not read. Further accounts are
+    # made in the admin console (Users) or with `python -m app.cli`.
     ADMIN_USERNAME: str = "admin"
-    ADMIN_PASSWORD: str = "changeme"
+    ADMIN_PASSWORD: Optional[str] = None
 
     # Cloudflare Turnstile (admin login). No default: when unset, every login is
     # rejected rather than silently skipping the bot check.
@@ -175,6 +193,15 @@ class Settings(BaseSettings):
         env_file = ".env"
         case_sensitive = True
         extra = "ignore"
+
+    @field_validator("SECRET_KEY")
+    @classmethod
+    def _secret_key_strength(cls, value: str) -> str:
+        # HS256 needs a key of at least 256 bits (RFC 7518 3.2); `openssl rand
+        # -hex 32` gives 64 characters.
+        if len(value or "") < 32:
+            raise ValueError("SECRET_KEY must be at least 32 characters (openssl rand -hex 32)")
+        return value
 
     @property
     def cors_origins(self) -> list[str]:

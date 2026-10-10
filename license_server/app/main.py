@@ -4,7 +4,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from .database import engine, Base
-from .routers import licenses, admin, admin_portal, internal_portal
+from . import accounts, audit
+from .database import SessionLocal
+from .routers import licenses, admin, admin_audit, admin_auth, admin_portal, admin_users, internal_portal
 from .middleware.logging import LoggingMiddleware
 from .middleware.rate_limit import RateLimitMiddleware
 from .core.config import settings
@@ -45,10 +47,21 @@ async def lifespan(app: FastAPI):
     # refuses unsigned answers). Say so at boot, where it will be seen.
     try:
         signer = get_signer()
+        kid = signer.kid
         logging.getLogger(__name__).info(
             "[License] signing answers with key id %s", signer.kid)
     except SigningKeyMissing as exc:
+        kid = None
         logging.getLogger(__name__).error("[License] %s", exc)
+
+    # The first admin account, when there is none yet (app/accounts.py).
+    db = SessionLocal()
+    try:
+        accounts.bootstrap_first_admin(db)
+    finally:
+        db.close()
+    audit.record("system.start", audit.SUCCESS, actor="system",
+                 detail={"version": app.version, "signing_key_id": kid})
 
     portal_notifier.start()
     portal_syncer.start()
@@ -60,11 +73,17 @@ async def lifespan(app: FastAPI):
         portal_notifier.stop()
 
 
+VERSION = "2.0.0"
+
 app = FastAPI(
-    title="License Server API",
+    title="NGCorion License Server API",
     description="License management and validation system",
-    version="1.0.0",
+    version=VERSION,
     lifespan=lifespan,
+    # Off unless ENABLE_API_DOCS: nothing in production needs the API description.
+    docs_url="/docs" if settings.ENABLE_API_DOCS else None,
+    redoc_url="/redoc" if settings.ENABLE_API_DOCS else None,
+    openapi_url="/openapi.json" if settings.ENABLE_API_DOCS else None,
 )
 
 # Add middleware
@@ -80,6 +99,9 @@ app.add_middleware(
 )
 
 app.include_router(licenses.router)
+app.include_router(admin_auth.router)
+app.include_router(admin_users.router)
+app.include_router(admin_audit.router)
 app.include_router(admin.router)
 # Admin browsing of the portal user/order cache, under the same /api/admin
 # prefix as admin.router but in its own file. Ordinary admin auth — these are
@@ -93,7 +115,7 @@ app.include_router(internal_portal.router)
 
 @app.get("/")
 def root():
-    return {"message": "License Server API is running"}
+    return {"message": "NGCorion License Server API", "version": VERSION}
 
 @app.get("/health")
 def health_check():

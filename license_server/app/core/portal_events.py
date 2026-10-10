@@ -58,12 +58,10 @@ import queue
 import random
 import threading
 import time
-import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 import requests
-from jose import jwt
 from sqlalchemy import update
 
 from .config import settings

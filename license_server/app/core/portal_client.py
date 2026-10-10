@@ -36,7 +36,7 @@ import uuid
 from typing import Any, Optional
 
 import requests
-from jose import jwt
+import jwt
 
 from .config import settings
 
