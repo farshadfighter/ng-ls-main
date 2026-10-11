@@ -5,6 +5,12 @@ annotated git tag `vX.Y.Z` equal to `VERSION` in `license_server/app/main.py`.
 
 ## Unreleased
 
+### Dependencies
+- Admin UI on React 19.3 and Vite 8.3 (with @vitejs/plugin-react 6.1);
+  FastAPI 0.142.4, uvicorn 0.54.0, pydantic-settings 2.15.0; ruff 0.16.10 and
+  pip-audit 2.10.1 for the checks; actions/setup-python v7. All 181 tests
+  pass; npm audit and pip-audit report nothing.
+
 ### Security
 - Port 80 can send `lic.ngcorion.com` to HTTPS (308) with the Let's Encrypt
   setup. `scripts/enable-https-redirect.sh` turns it on only after checking on
