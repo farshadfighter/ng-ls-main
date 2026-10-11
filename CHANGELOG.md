@@ -3,6 +3,17 @@
 Versions follow [Semantic Versioning](https://semver.org); each release is an
 annotated git tag `vX.Y.Z` equal to `VERSION` in `license_server/app/main.py`.
 
+## Unreleased
+
+### Documentation (AFTA)
+- Persian installation and operation guide for every console role
+  (`docs/fa/ADMIN_GUIDE.md`, AGD_PRE/AGD_OPE) and Persian security
+  architecture (`docs/fa/ARCHITECTURE.md`, ADV_ARC); the Security Target
+  points to them. The older English guides that describe the first version of
+  the license system are marked as superseded.
+- `.env.example`: the first account's password follows the real policy (12
+  characters, three character classes).
+
 ## 2.0.0 — 2026-10-11
 
 ### Security

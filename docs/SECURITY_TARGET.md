@@ -63,8 +63,8 @@
 
 | مؤلفه | مدرک |
 |---|---|
-| ADV_ARC.1 / ADV_FSP.2 / ADV_TDS.1 | `license_server/LICENSE_SYSTEM_COMPLETE_GUIDE.md`، `LICENSE_PLANS_SUMMARY.md`، این سند |
-| AGD_OPE.1 / AGD_PRE.1 | `README`ها، `ACME.md`، راهنمای درون کنسول (Guide) — **نسخهٔ فارسی راهنمای مدیر لازم است** |
+| ADV_ARC.1 / ADV_FSP.2 / ADV_TDS.1 | `docs/fa/ARCHITECTURE.md` (معماری امنیتی، فارسی)، `license_server/LICENSE_PLANS_SUMMARY.md`، این سند |
+| AGD_OPE.1 / AGD_PRE.1 | `docs/fa/ADMIN_GUIDE.md` (نصب و راهبری، همهٔ نقش‌ها، فارسی)، `ACME.md`، راهنمای درون کنسول (Guide) |
 | ALC_CMC.2 / ALC_CMS.2 | گیت با تگ نسخه، `CHANGELOG.md`، CI |
 | ALC_FLR.1 | `SECURITY.md`، Dependabot، `pip-audit` و `npm audit` در CI |
 | ATE_COV.1 / ATE_FUN.1 | آزمون‌های خودکار `license_server/tests/` (روی PostgreSQL و Redis واقعی در CI) |

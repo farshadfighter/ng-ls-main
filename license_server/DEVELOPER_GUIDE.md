@@ -1,5 +1,7 @@
 # Developer Guide: License Management
 
+> **Superseded.** Parts of this document describe the first version of the license system (a single admin password, HMAC-signed requests, per-operation consumption). The current design is in `docs/fa/ARCHITECTURE.md`, `docs/fa/ADMIN_GUIDE.md`, `SECURITY.md` and the in-console Guide; where they differ, those are right.
+
 > **Licensing v3 (asset-based plans).** Plans are now SKUs with an asset
 > limit plus 50-asset add-on packs; audits and hardening runs are no longer
 > counted, `/api/licenses/consume`, `plan_type` and the `max_/used_audits|hardens`
