@@ -3,7 +3,9 @@
 # The version must be the one in the code at that commit (license_server/
 # app/main.py), and an existing tag is never moved. The tag is annotated and
 # made by GitHub Actions, so who started it is on record in the run.
-# See CHANGELOG.md; versions follow Semantic Versioning.
+# See CHANGELOG.md; versions follow Semantic Versioning. The tag gets a draft
+# GitHub release with the Persian documents as PDF (scripts/docs_pdf.py) and
+# their SHA256SUMS; publish it after checking.
 name: Release tag
 
 on:
@@ -23,7 +25,7 @@ permissions:
 jobs:
   tag:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -46,3 +48,25 @@ jobs:
           git tag -a "v$VERSION" -m "NGCorion License Server $VERSION (tagged by $ACTOR)"
           git push origin "v$VERSION"
           echo "Tagged $(git rev-parse --short HEAD) as v$VERSION" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Documents (Persian PDF)
+        run: |
+          pip install markdown==3.5.2 playwright==1.63.0 pypdf==5.4.0
+          python -m playwright install --with-deps chromium
+          python scripts/docs_pdf.py --out release
+          (cd release && sha256sum ./*.pdf > SHA256SUMS)
+      - name: Draft release with the documents
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          printf 'NGCorion License Server %s.\n\nPersian documents (PDF), printed from `docs/` at this tag: installation and operation guide, security architecture, Security Target. Check them with `sha256sum -c SHA256SUMS`.\n' "$VERSION" > /tmp/notes.md
+          gh release create "v$VERSION" --draft --verify-tag --title "NGCorion License Server $VERSION" \
+            --notes-file /tmp/notes.md release/*
+          echo "Draft release v$VERSION with the documents" >> "$GITHUB_STEP_SUMMARY"

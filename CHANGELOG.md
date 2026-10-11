@@ -18,6 +18,12 @@ annotated git tag `vX.Y.Z` equal to `VERSION` in `license_server/app/main.py`.
   (`scripts/test-https-redirect.sh`).
 
 ### Documentation (AFTA)
+- The Persian installation/operation guide, security architecture and
+  Security Target as PDF (`scripts/docs_pdf.py`): right-to-left A4 in
+  Vazirmatn, a cover with version, document id and Jalali date, a linked
+  table of contents, bookmarks and page numbers. CI builds them on every push
+  (artifact `license-server-docs-fa-pdf`); the Release tag workflow attaches
+  them, with `SHA256SUMS`, to a draft release for the tag.
 - Persian installation and operation guide for every console role
   (`docs/fa/ADMIN_GUIDE.md`, AGD_PRE/AGD_OPE) and Persian security
   architecture (`docs/fa/ARCHITECTURE.md`, ADV_ARC); the Security Target
