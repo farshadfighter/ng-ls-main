@@ -11,7 +11,7 @@ needed on the server, and no domain manager in front of it.
 ```
 internet ──443──► Traefik ── lic.ngcorion.com: TLS ends here (Let's Encrypt) ──► nginx :8081
                          └─ IP / other names: passed through encrypted ─────────► nginx :8443 (self-signed)
-LAN      ───80──► nginx :80  (unchanged)
+LAN      ───80──► nginx :80  (unchanged; optionally lic.ngcorion.com -> HTTPS, see below)
 ```
 
 * **Traefik** (`traefik/dynamic.yml`) takes host port 443. It chooses by the
@@ -90,6 +90,38 @@ curl -fsS https://lic.ngcorion.com/health
 # the public key NGCorion trusts
 curl -fsS https://lic.ngcorion.com/api/signing-key
 ```
+
+## Redirecting port 80 to HTTPS
+
+Port 80 keeps serving the whole application in cleartext (the LAN, the
+portal and a domain manager use it). Once the Let's Encrypt certificate
+works, plain-HTTP requests **for `lic.ngcorion.com`** can be sent to HTTPS
+instead:
+
+```
+scripts/enable-https-redirect.sh
+```
+
+It checks on this host that `https://lic.ngcorion.com/health` answers with a
+certificate the system trusts for that name and that the certificate is valid
+for at least another 14 days; only then it sets `HTTPS_REDIRECT=on` in `.env`,
+recreates the nginx container and checks that port 80 now answers `308` for
+`http://lic.ngcorion.com/` and still `200` for `/health`. If any step fails it
+leaves (or puts) the redirect off.
+
+What is redirected and what is not (`license-admin-ui/nginx.conf`, `$ls_to_https`):
+
+| Request on port 80 | With the redirect on |
+|---|---|
+| `Host: lic.ngcorion.com`, any path | `308` to `https://lic.ngcorion.com` + the same path (a POST stays a POST) |
+| `/internal/…` (portal) | unchanged: the IP allow list still applies |
+| `/health` | unchanged: health checks keep working |
+| the bare IP, `license.ngcorion.local`, any other name | unchanged |
+| forwarded with `X-Forwarded-Proto: https` (a domain manager that ended TLS) | unchanged: no redirect loop |
+
+Turn it off again with `scripts/enable-https-redirect.sh --off`. The same
+rules are checked against the real nginx image in CI
+(`scripts/test-https-redirect.sh`).
 
 ## When something fails
 

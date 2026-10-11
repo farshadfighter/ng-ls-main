@@ -1,6 +1,7 @@
 # Checks for every push and pull request: the license server's tests against a
 # real PostgreSQL and Redis, lint (ruff, including the bandit security rules),
-# known vulnerabilities in the dependencies, and the admin UI build.
+# known vulnerabilities in the dependencies, the admin UI build, and the nginx
+# config's port 80 -> HTTPS redirect against the real nginx image.
 name: CI
 
 on:
@@ -96,3 +97,12 @@ jobs:
           cache-dependency-path: license-admin-ui/package-lock.json
       - run: npm ci
       - run: npm run build
+
+  nginx:
+    name: nginx config (HTTPS redirect)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Port 80 redirect only where intended (real nginx, redirect off and on)
+        run: scripts/test-https-redirect.sh

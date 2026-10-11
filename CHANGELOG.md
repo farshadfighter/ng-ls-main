@@ -5,6 +5,18 @@ annotated git tag `vX.Y.Z` equal to `VERSION` in `license_server/app/main.py`.
 
 ## Unreleased
 
+### Security
+- Port 80 can send `lic.ngcorion.com` to HTTPS (308) with the Let's Encrypt
+  setup. `scripts/enable-https-redirect.sh` turns it on only after checking on
+  the host that `https://lic.ngcorion.com` answers with a publicly trusted
+  certificate valid for at least 14 more days, and checks the result (it
+  switches back off on failure); `--off` turns it off. `/internal/` (portal
+  allow list), `/health`, the bare IP, other names and requests forwarded with
+  `X-Forwarded-Proto: https` are never redirected. Off by default
+  (`HTTPS_REDIRECT=off`); nothing changes without the ACME override. A new CI
+  job checks these rules against the real nginx image
+  (`scripts/test-https-redirect.sh`).
+
 ### Documentation (AFTA)
 - Persian installation and operation guide for every console role
   (`docs/fa/ADMIN_GUIDE.md`, AGD_PRE/AGD_OPE) and Persian security

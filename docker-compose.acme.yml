@@ -12,6 +12,8 @@
 #     and the bare IP are passed through to nginx and still get the
 #     self-signed certificate (traefik/dynamic.yml).
 #   * nginx keeps host port 80 and stops publishing 443 (Traefik has it).
+#   * Port 80 can send lic.ngcorion.com to HTTPS once the certificate is in
+#     place: scripts/enable-https-redirect.sh (off until then).
 #
 # The certificate is obtained with the TLS-ALPN-01 challenge, which runs
 # entirely on port 443. Port 80 is therefore left to nginx, unchanged, for
@@ -72,6 +74,17 @@ services:
     # reached on 8081/8443 from Traefik over the compose network.
     ports: !override
       - "${FRONTEND_PORT:-80}:80"
+    volumes:
+      # Port 80 -> HTTPS for lic.ngcorion.com: "off" until
+      # scripts/enable-https-redirect.sh has checked the Let's Encrypt
+      # certificate and set HTTPS_REDIRECT=on (ACME.md). Any other value has no
+      # file and stops `docker compose up` with "bind source path does not exist".
+      - type: bind
+        source: ./license-admin-ui/https-redirect/${HTTPS_REDIRECT:-off}.conf
+        target: /etc/nginx/https-redirect/redirect.conf
+        read_only: true
+        bind:
+          create_host_path: false
 
 volumes:
   acme:
