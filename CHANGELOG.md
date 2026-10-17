@@ -13,7 +13,7 @@ annotated git tag `vX.Y.Z` equal to `VERSION` in `license_server/app/main.py`.
   (503), so compose no longer refuses to start without it.
 - `GET /api/admin/login-options` (public) tells the login form whether to show
   the challenge, so the flag lives only in the server's environment:
-  `docker compose restart backend`, no rebuild.
+  `docker compose up -d backend` (`restart` does not re-read .env), no rebuild.
 
 ### Dependencies
 - Admin UI on React 19.3 and Vite 8.3 (with @vitejs/plugin-react 6.1);

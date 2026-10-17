@@ -80,7 +80,7 @@ python license_server/scripts/generate_signing_key.py
 |---|---|
 | `SECRET_KEY` | تصادفی، دست‌کم ۳۲ نویسه (`openssl rand -hex 32`)؛ کوتاه‌تر، سرور را متوقف می‌کند. |
 | `ADMIN_USERNAME`، `ADMIN_PASSWORD` | فقط **اولین** حساب مدیر را در اولین اجرا می‌سازند؛ رمز باید طبق سیاست رمز باشد و در اولین ورود عوض شود. پس از آن خوانده نمی‌شوند. |
-| `TURNSTILE_ENABLED` | پیش‌فرض `true`: فرم ورود چالش Cloudflare Turnstile دارد. `false` فقط برای سروری که به Cloudflare دسترسی ندارد (بدون اینترنت، آزمایشگاه)؛ آن‌گاه فقط رمز، قفل حساب و نشست‌ها از کنسول محافظت می‌کنند. تغییر آن با `docker compose restart backend`، بدون ساخت دوبارهٔ رابط. |
+| `TURNSTILE_ENABLED` | پیش‌فرض `true`: فرم ورود چالش Cloudflare Turnstile دارد. `false` فقط برای سروری که به Cloudflare دسترسی ندارد (بدون اینترنت، آزمایشگاه)؛ آن‌گاه فقط رمز، قفل حساب و نشست‌ها از کنسول محافظت می‌کنند. تغییر آن با `docker compose up -d backend` (`restart` فایل `.env` را دوباره نمی‌خواند)، بدون ساخت دوبارهٔ رابط. |
 | `TURNSTILE_SECRET_KEY` | کلید Cloudflare Turnstile برای فرم ورود (جلوگیری از ربات‌ها). وقتی `TURNSTILE_ENABLED=true` باشد لازم است؛ اگر خالی باشد هر ورودی با خطای ۵۰۳ رد می‌شود. |
 | `LICENSE_SIGNING_PRIVATE_KEY` | خروجی بند ۳.۳. |
 | `REDIS_PASSWORD` | تصادفی (`openssl rand -hex 32`). |
