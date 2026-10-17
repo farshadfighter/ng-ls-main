@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { login } from "../auth/auth.js";
-import { getLoginBanner } from "../api/client.js";
+import { getLoginBanner, loginOptions } from "../api/client.js";
 
 const TURNSTILE_SITE_KEY =
   import.meta.env.VITE_TURNSTILE_SITE_KEY || "0x4AAAAAAE4jLGhJo1wHHnwA";
@@ -12,6 +12,8 @@ export default function Login({ onSuccess, notice = "" }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState("");
+  // null while asking the server, then true/false (TURNSTILE_ENABLED, GET /api/admin/login-options).
+  const [turnstileEnabled, setTurnstileEnabled] = useState(null);
   const turnstileContainer = useRef(null);
   const turnstileWidget = useRef(null);
 
@@ -20,9 +22,21 @@ export default function Login({ onSuccess, notice = "" }) {
     getLoginBanner().then((r) => setBanner(r?.banner || "")).catch(() => setBanner(""));
   }, []);
 
-  // The Turnstile script is loaded async from index.html with render=explicit,
-  // so it may not be ready on first mount: render now or once it loads.
+  // Assume the challenge is on if the question fails: that is the default, and showing a
+  // challenge the server ignores still signs you in, while hiding one it demands makes it impossible.
   useEffect(() => {
+    let cancelled = false;
+    loginOptions()
+      .then((opts) => { if (!cancelled) setTurnstileEnabled(opts?.turnstile_enabled !== false); })
+      .catch(() => { if (!cancelled) setTurnstileEnabled(true); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // The Turnstile script is loaded async from index.html with render=explicit,
+  // so it may not be ready on first mount: render now or once it loads. Only when the server wants
+  // the challenge; the container below is mounted in the same render that sets the flag.
+  useEffect(() => {
+    if (turnstileEnabled !== true) return undefined;
     let cancelled = false;
 
     function renderWidget() {
@@ -51,18 +65,18 @@ export default function Login({ onSuccess, notice = "" }) {
         turnstileWidget.current = null;
       }
     };
-  }, []);
+  }, [turnstileEnabled]);
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!turnstileToken) {
+    if (turnstileEnabled !== false && !turnstileToken) {
       setError("Please complete the human verification");
       return;
     }
     setError("");
     setBusy(true);
     try {
-      await login(username.trim(), password, turnstileToken);
+      await login(username.trim(), password, turnstileEnabled === false ? "" : turnstileToken);
       onSuccess();
     } catch (err) {
       setError(err.message || "Login failed");
@@ -107,11 +121,11 @@ export default function Login({ onSuccess, notice = "" }) {
               onChange={(e) => setPassword(e.target.value)}
             />
           </div>
-          <div className="field" ref={turnstileContainer} />
+          {turnstileEnabled && <div className="field" ref={turnstileContainer} />}
           <button
             className="primary"
             type="submit"
-            disabled={busy || !turnstileToken}
+            disabled={busy || turnstileEnabled === null || (turnstileEnabled && !turnstileToken)}
             style={{ width: "100%" }}
           >
             {busy ? "Signing in…" : "Sign in"}

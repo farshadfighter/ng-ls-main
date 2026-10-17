@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost/test")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-0123456789abcdef-0123456789")
 
-from fastapi import FastAPI  # noqa: E402
+from fastapi import FastAPI, HTTPException  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.core import passwords  # noqa: E402  (no settings: safe during discovery)
@@ -62,6 +62,39 @@ class PasswordTest(unittest.TestCase):
         with self.assertRaises(passwords.PasswordPolicyError):
             passwords.check_policy(GOOD, "bob", current)
         passwords.check_policy(ALSO_GOOD, "bob", current)
+
+
+class TurnstileSwitchTest(unittest.TestCase):
+    """TURNSTILE_ENABLED: on by default and fail-closed; off only skips the challenge."""
+
+    def setUp(self):
+        app = FastAPI()
+        app.include_router(routers["admin_auth"].router)
+        self.client = TestClient(app)
+        self.settings = routers["admin_auth"].settings
+
+    def test_on_by_default_and_fails_closed(self):
+        self.assertTrue(self.settings.TURNSTILE_ENABLED)
+        self.assertEqual(self.client.get("/api/admin/login-options").json(), {"turnstile_enabled": True})
+        verify = routers["admin_auth"].verify_turnstile
+        with patch.object(self.settings, "TURNSTILE_SECRET_KEY", None):
+            with self.assertRaises(HTTPException) as e:
+                verify("token", "10.0.0.1")
+            self.assertEqual(e.exception.status_code, 503)
+        with patch.object(self.settings, "TURNSTILE_SECRET_KEY", "secret"):
+            with self.assertRaises(HTTPException) as e:
+                verify("", "10.0.0.1")
+            self.assertEqual(e.exception.status_code, 400)
+
+    def test_off_skips_only_the_challenge(self):
+        with patch.object(self.settings, "TURNSTILE_ENABLED", False), \
+                patch.object(self.settings, "TURNSTILE_SECRET_KEY", None):
+            self.assertEqual(self.client.get("/api/admin/login-options").json(), {"turnstile_enabled": False})
+            routers["admin_auth"].verify_turnstile("", "10.0.0.1")       # no exception, no Cloudflare call
+            # the password is still checked
+            r = self.client.post("/api/admin/login", json={"username": "nobody-" + uuid.uuid4().hex[:6],
+                                                           "password": "wrong"})
+            self.assertEqual(r.status_code, 401)
 
 
 class AccountsApiTest(unittest.TestCase):

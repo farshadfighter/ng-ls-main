@@ -106,6 +106,10 @@ export const changeMyPassword = (current_password, new_password) =>
   api.post("/api/admin/me/password", { current_password, new_password }, { auth: true });
 export const getLoginBanner = () => api.get("/api/admin/login-banner");
 
+// Public (no auth): does this server want a Turnstile token on login (TURNSTILE_ENABLED)? Read at
+// runtime, so the flag lives only in the server's environment and the bundle need not be rebuilt.
+export const loginOptions = () => api.get("/api/admin/login-options");
+
 // Admin accounts (admin role).
 export const listUsers = () => api.get("/api/admin/users", { auth: true });
 export const createUser = (payload) => api.post("/api/admin/users", payload, { auth: true });

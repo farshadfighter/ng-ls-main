@@ -59,8 +59,12 @@ class Settings(BaseSettings):
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: Optional[str] = None
 
-    # Cloudflare Turnstile (admin login). No default: when unset, every login is
-    # rejected rather than silently skipping the bot check.
+    # Cloudflare Turnstile (admin login). TURNSTILE_ENABLED=true (the default, and the only setting
+    # for an internet-reachable server) requires the challenge; TURNSTILE_SECRET_KEY then has no
+    # default: when unset, every login is rejected rather than silently skipping the bot check.
+    # TURNSTILE_ENABLED=false only where this host cannot reach Cloudflare (air-gapped, lab):
+    # the account password, lockout and sessions are then the only gate on the console.
+    TURNSTILE_ENABLED: bool = True
     TURNSTILE_SECRET_KEY: Optional[str] = None
 
     # CORS — comma-separated origins (scheme + host[:port], no trailing slash,

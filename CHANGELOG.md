@@ -5,6 +5,16 @@ annotated git tag `vX.Y.Z` equal to `VERSION` in `license_server/app/main.py`.
 
 ## Unreleased
 
+### Admin login: Turnstile can be switched off (from SinaBimesl/ng-ls `abd381a`)
+- `TURNSTILE_ENABLED` (default `true`). `false` only for a server that cannot
+  reach Cloudflare (air-gapped, lab): the login challenge is skipped and the
+  widget leaves the login form; account passwords, lockout and sessions remain.
+  With the default, an empty `TURNSTILE_SECRET_KEY` still refuses every login
+  (503), so compose no longer refuses to start without it.
+- `GET /api/admin/login-options` (public) tells the login form whether to show
+  the challenge, so the flag lives only in the server's environment:
+  `docker compose restart backend`, no rebuild.
+
 ### Dependencies
 - Admin UI on React 19.3 and Vite 8.3 (with @vitejs/plugin-react 6.1);
   FastAPI 0.142.4, uvicorn 0.54.0, pydantic-settings 2.15.0; ruff 0.16.10 and

@@ -86,9 +86,14 @@ services:
       - ADMIN_IDLE_TIMEOUT_MINUTES=${ADMIN_IDLE_TIMEOUT_MINUTES:-15}
       - ADMIN_MAX_FAILED_LOGINS=${ADMIN_MAX_FAILED_LOGINS:-5}
       - ADMIN_LOCKOUT_MINUTES=${ADMIN_LOCKOUT_MINUTES:-15}
-      # Admin login is gated by Cloudflare Turnstile; without the secret every
-      # login is rejected, so refuse to start instead.
-      - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:?set TURNSTILE_SECRET_KEY in .env}
+      # Admin login is gated by Cloudflare Turnstile. TURNSTILE_ENABLED=false turns
+      # the check off for a host with no route to Cloudflare, so the secret is not a
+      # ${VAR:?} requirement: with the default (true) an empty secret still rejects
+      # every login (503 and an ERROR log), a clear failure rather than a skipped check.
+      # The admin UI reads the flag at runtime (GET /api/admin/login-options), so
+      # changing it needs `docker compose restart backend`, not a rebuild.
+      - TURNSTILE_ENABLED=${TURNSTILE_ENABLED:-true}
+      - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:-}
       # Signs every licensing answer; NGCorion refuses unsigned ones, so start
       # nothing without it. Generate with license_server/scripts/generate_signing_key.py.
       - LICENSE_SIGNING_PRIVATE_KEY=${LICENSE_SIGNING_PRIVATE_KEY:?set LICENSE_SIGNING_PRIVATE_KEY in .env (python license_server/scripts/generate_signing_key.py)}

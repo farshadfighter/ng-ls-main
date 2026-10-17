@@ -60,8 +60,12 @@ def verify_turnstile(token: str, remote_ip: Optional[str]) -> None:
     """Reject the request unless Cloudflare confirms the Turnstile token.
 
     Fails closed: a missing secret, an unreachable siteverify endpoint or a
-    malformed reply all refuse the login.
+    malformed reply all refuse the login. Skipped only when the administrator
+    turned the check off (TURNSTILE_ENABLED=false, a host with no route to
+    Cloudflare).
     """
+    if not settings.TURNSTILE_ENABLED:
+        return
     if not settings.TURNSTILE_SECRET_KEY:
         logger.error("TURNSTILE_SECRET_KEY is not set; refusing admin login")
         raise HTTPException(status_code=503, detail="Login verification is not configured")
@@ -81,6 +85,13 @@ def verify_turnstile(token: str, remote_ip: Optional[str]) -> None:
     if not result.get("success"):
         logger.warning("Turnstile rejected admin login: %s", result.get("error-codes"))
         raise HTTPException(status_code=400, detail="Human verification failed, please try again")
+
+
+@router.get("/login-options")
+def login_options():
+    """Whether the login form must show the Turnstile challenge (TURNSTILE_ENABLED). Public: the
+    form asks before anyone signs in, so the flag lives only in the server's environment."""
+    return {"turnstile_enabled": settings.TURNSTILE_ENABLED}
 
 
 @router.get("/login-banner")
