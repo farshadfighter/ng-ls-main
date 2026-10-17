@@ -44,7 +44,7 @@ LICENSE_SERVER_IP="${LICENSE_SERVER_IP:-$(env_get LICENSE_SERVER_IP)}"
 LICENSE_SERVER_DNS="${LICENSE_SERVER_DNS:-$(env_get LICENSE_SERVER_DNS)}"
 LICENSE_SERVER_IP="${LICENSE_SERVER_IP:-172.16.120.81}"
 # Comma-separated: every hostname the server is reached by gets a DNS SAN.
-LICENSE_SERVER_DNS="${LICENSE_SERVER_DNS:-license.ngcorion.local,lic.ngcorion.co}"
+LICENSE_SERVER_DNS="${LICENSE_SERVER_DNS:-license.ngcorion.local,lic.ngcorion.com}"
 CERT_DAYS="${CERT_DAYS:-825}"
 
 CERT_DIR=certs
