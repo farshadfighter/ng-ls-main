@@ -31,3 +31,6 @@ certs/
 # Misc
 *.log
 .DS_Store
+
+# Redis snapshots written by a local redis-server
+dump.rdb
