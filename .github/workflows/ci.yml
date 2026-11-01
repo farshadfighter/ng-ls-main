@@ -124,7 +124,7 @@ jobs:
         run: python -m playwright install --with-deps chromium
       - name: Admin guide, architecture and Security Target as PDF
         run: python scripts/docs_pdf.py
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: license-server-docs-fa-pdf
           path: dist/docs/*.pdf
