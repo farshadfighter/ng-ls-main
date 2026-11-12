@@ -86,13 +86,12 @@ services:
       - ADMIN_IDLE_TIMEOUT_MINUTES=${ADMIN_IDLE_TIMEOUT_MINUTES:-15}
       - ADMIN_MAX_FAILED_LOGINS=${ADMIN_MAX_FAILED_LOGINS:-5}
       - ADMIN_LOCKOUT_MINUTES=${ADMIN_LOCKOUT_MINUTES:-15}
-      # Admin login is gated by Cloudflare Turnstile. TURNSTILE_ENABLED=false turns
-      # the check off for a host with no route to Cloudflare, so the secret is not a
-      # ${VAR:?} requirement: with the default (true) an empty secret still rejects
-      # every login (503 and an ERROR log), a clear failure rather than a skipped check.
-      # The admin UI reads the flag at runtime (GET /api/admin/login-options), so
-      # changing it needs `docker compose restart backend`, not a rebuild.
-      - TURNSTILE_ENABLED=${TURNSTILE_ENABLED:-true}
+      # The admin login's bot check (CAPTCHA_MODE): builtin (default, the server's own
+      # picture, kept in Redis), turnstile (Cloudflare; an empty secret then rejects
+      # every login with 503 and an ERROR log) or off. The admin UI reads the mode at
+      # runtime (GET /api/admin/login-options), so changing it needs
+      # `docker compose up -d backend` (restart keeps the old .env), not a rebuild.
+      - CAPTCHA_MODE=${CAPTCHA_MODE:-builtin}
       - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:-}
       # Signs every licensing answer; NGCorion refuses unsigned ones, so start
       # nothing without it. Generate with license_server/scripts/generate_signing_key.py.

@@ -54,6 +54,16 @@ async def lifespan(app: FastAPI):
         kid = None
         logging.getLogger(__name__).error("[License] %s", exc)
 
+    # The login's bot check (app/routers/admin_auth.py). TURNSTILE_ENABLED is no longer read:
+    # say so, so a server whose .env still has it does not believe it still switches anything.
+    log = logging.getLogger(__name__)
+    log.info("[Login] bot check: CAPTCHA_MODE=%s", settings.CAPTCHA_MODE)
+    if settings.TURNSTILE_ENABLED is not None:
+        log.warning("[Login] TURNSTILE_ENABLED is no longer read; CAPTCHA_MODE (builtin, turnstile "
+                    "or off) decides the login's bot check, now %s", settings.CAPTCHA_MODE)
+    if settings.CAPTCHA_MODE == "off":
+        log.warning("[Login] CAPTCHA_MODE=off: the admin login has no bot check")
+
     # The first admin account, when there is none yet (app/accounts.py).
     db = SessionLocal()
     try:

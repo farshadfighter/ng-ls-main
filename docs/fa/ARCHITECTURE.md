@@ -49,7 +49,7 @@
 | # | جریان | حفاظت |
 |---|---|---|
 | 1 | NGCorion → `/api/licenses/*` | TLS با گواهی عمومی؛ ورودی محدود (کلید ≤ ۶۴، اثر انگشت ۱۶ تا ۱۲۸ نویسهٔ هگز، توکن ≤ ۱۲۸)؛ محدودیت نرخ؛ پاسخ امضاشده با nonce مشتری. |
-| 2 | مرورگر مدیر → کنسول و `/api/admin/*` | TLS؛ Turnstile در ورود (مگر `TURNSTILE_ENABLED=false` روی میزبان بدون دسترسی به Cloudflare)؛ JWT نشست + نشست سمت سرور؛ نقش در هر درخواست. |
+| 2 | مرورگر مدیر → کنسول و `/api/admin/*` | TLS؛ بررسی ضدربات در ورود (`CAPTCHA_MODE`: پیش‌فرض کپچای تصویری خود سرور، یک‌بارمصرف و ۲ دقیقه‌ای در Redis؛ یا Turnstile)؛ JWT نشست + نشست سمت سرور؛ نقش در هر درخواست. |
 | 3 | پورتال فروش → `/internal/portal/*` | فهرست مجاز IP در nginx و برنامه؛ JWT HS256 با `PORTAL_JWT_SECRET` (جدا از `SECRET_KEY`)، iss/aud، عمر کوتاه، `jti` یک‌بارمصرف در Redis. |
 | 4 | سرور لایسنس → پورتال | رویدادهای لایسنس با JWT امضاشده، تلاش دوباره با تأخیر نمایی. |
 | 5 | nginx → backend، backend → PostgreSQL/Redis | شبکهٔ داخلی Docker؛ backend منتشر نمی‌شود؛ Redis با رمز. |
@@ -86,7 +86,7 @@ protocol) بازنویسی می‌کند؛ برنامه فقط `X-Real-IP` را 
 
 | مرحله | تضمین | محل |
 |---|---|---|
-| پیکربندی | Compose بدون `SECRET_KEY`، `ADMIN_PASSWORD`، `LICENSE_SIGNING_PRIVATE_KEY`، `REDIS_PASSWORD` و `PORTAL_JWT_SECRET` اجرا نمی‌شود؛ با `TURNSTILE_ENABLED=true` (پیش‌فرض) و `TURNSTILE_SECRET_KEY` خالی هر ورود با ۵۰۳ رد می‌شود؛ `SECRET_KEY` کوتاه‌تر از ۳۲ نویسه برنامه را متوقف می‌کند. | `docker-compose.yml`، `app/core/config.py` |
+| پیکربندی | Compose بدون `SECRET_KEY`، `ADMIN_PASSWORD`، `LICENSE_SIGNING_PRIVATE_KEY`، `REDIS_PASSWORD` و `PORTAL_JWT_SECRET` اجرا نمی‌شود؛ با `CAPTCHA_MODE=turnstile` و `TURNSTILE_SECRET_KEY` خالی، یا با کپچای داخلی (پیش‌فرض) و Redis ناپیدا، هر ورود با ۵۰۳ رد می‌شود؛ `SECRET_KEY` کوتاه‌تر از ۳۲ نویسه برنامه را متوقف می‌کند. | `docker-compose.yml`، `app/core/config.py` |
 | ایمیج | `.env` در ایمیج نیست (`.dockerignore`)؛ backend با کاربر غیرممتاز (UID 10001) اجرا می‌شود. | `license_server/Dockerfile` |
 | شروع | مهاجرت‌های Alembic؛ ساخت اولین مدیر فقط اگر هیچ حسابی وجود ندارد (با تغییر اجباری رمز)؛ ثبت `system.start` با شناسهٔ کلید امضا در دنبالهٔ ممیزی. | `entrypoint.sh`، `app/accounts.py`، `app/main.py` |
 | مستندات API | `/docs` و `/openapi.json` به‌طور پیش‌فرض خاموش (`ENABLE_API_DOCS=False`). | `app/core/config.py` |
@@ -159,5 +159,5 @@ protocol) بازنویسی می‌کند؛ برنامه فقط `X-Real-IP` را 
   Let's Encrypt می‌توان درخواست‌های `lic.ngcorion.com` روی این پورت را به HTTPS هدایت کرد
   (`scripts/enable-https-redirect.sh`؛ فقط پس از بررسی گواهی روشن می‌شود و `/internal/` و `/health` را
   هدایت نمی‌کند).
-* Turnstile به سرویس Cloudflare وابسته است (محیط).
+* کپچای داخلی (پیش‌فرض) به سرویس بیرونی وابسته نیست؛ Turnstile (`CAPTCHA_MODE=turnstile`) به Cloudflare وابسته است (محیط).
 * امنیت کلید خصوصی امضا به امنیت میزبان وابسته است (A.HOST)؛ سرور از HSM استفاده نمی‌کند.

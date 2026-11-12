@@ -41,8 +41,8 @@ export function clearToken() {
   sessionStorage.removeItem(IDLE_KEY);
 }
 
-export async function login(username, password, turnstileToken) {
-  const data = await adminLogin(username, password, turnstileToken);
+export async function login(username, password, check) {
+  const data = await adminLogin(username, password, check);
   if (!data?.access_token) throw new Error("No token returned by server");
   sessionStorage.setItem(TOKEN_KEY, data.access_token);
   sessionStorage.setItem(IDLE_KEY, String(data.idle_timeout_minutes || 15));

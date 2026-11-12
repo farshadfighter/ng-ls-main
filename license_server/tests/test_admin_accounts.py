@@ -64,8 +64,8 @@ class PasswordTest(unittest.TestCase):
         passwords.check_policy(ALSO_GOOD, "bob", current)
 
 
-class TurnstileSwitchTest(unittest.TestCase):
-    """TURNSTILE_ENABLED: on by default and fail-closed; off only skips the challenge."""
+class CaptchaModeTest(unittest.TestCase):
+    """CAPTCHA_MODE: the server's picture by default; Turnstile fails closed; off skips only the check."""
 
     def setUp(self):
         app = FastAPI()
@@ -73,36 +73,50 @@ class TurnstileSwitchTest(unittest.TestCase):
         self.client = TestClient(app)
         self.settings = routers["admin_auth"].settings
 
-    def test_on_by_default_and_fails_closed(self):
-        self.assertTrue(self.settings.TURNSTILE_ENABLED)
-        self.assertEqual(self.client.get("/api/admin/login-options").json(), {"turnstile_enabled": True})
-        verify = routers["admin_auth"].verify_turnstile
-        with patch.object(self.settings, "TURNSTILE_SECRET_KEY", None):
-            with self.assertRaises(HTTPException) as e:
-                verify("token", "10.0.0.1")
-            self.assertEqual(e.exception.status_code, 503)
-        with patch.object(self.settings, "TURNSTILE_SECRET_KEY", "secret"):
-            with self.assertRaises(HTTPException) as e:
-                verify("", "10.0.0.1")
-            self.assertEqual(e.exception.status_code, 400)
+    def test_builtin_by_default(self):
+        self.assertEqual(self.settings.CAPTCHA_MODE, "builtin")
+        self.assertEqual(self.client.get("/api/admin/login-options").json(),
+                         {"captcha": "builtin", "turnstile_enabled": False})
+        # no picture named: refused before the credentials are looked at
+        r = self.client.post("/api/admin/login", json={"username": "nobody", "password": "wrong"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_turnstile_fails_closed(self):
+        with patch.object(self.settings, "CAPTCHA_MODE", "turnstile"):
+            self.assertEqual(self.client.get("/api/admin/login-options").json(),
+                             {"captcha": "turnstile", "turnstile_enabled": True})
+            self.assertEqual(self.client.post("/api/admin/captcha").status_code, 404)
+            verify = routers["admin_auth"].verify_turnstile
+            with patch.object(self.settings, "TURNSTILE_SECRET_KEY", None):
+                with self.assertRaises(HTTPException) as e:
+                    verify("token", "10.0.0.1")
+                self.assertEqual(e.exception.status_code, 503)
+            with patch.object(self.settings, "TURNSTILE_SECRET_KEY", "secret"):
+                with self.assertRaises(HTTPException) as e:
+                    verify("", "10.0.0.1")
+                self.assertEqual(e.exception.status_code, 400)
 
     def test_off_skips_only_the_challenge(self):
-        with patch.object(self.settings, "TURNSTILE_ENABLED", False), \
-                patch.object(self.settings, "TURNSTILE_SECRET_KEY", None):
-            self.assertEqual(self.client.get("/api/admin/login-options").json(), {"turnstile_enabled": False})
-            routers["admin_auth"].verify_turnstile("", "10.0.0.1")       # no exception, no Cloudflare call
+        with patch.object(self.settings, "CAPTCHA_MODE", "off"), \
+                patch.object(self.settings, "TURNSTILE_SECRET_KEY", None), \
+                patch.object(routers["admin_auth"], "verify_turnstile") as turnstile, \
+                patch.object(routers["admin_auth"], "verify_captcha") as picture:
+            self.assertEqual(self.client.get("/api/admin/login-options").json(),
+                             {"captcha": "off", "turnstile_enabled": False})
             # the password is still checked
             r = self.client.post("/api/admin/login", json={"username": "nobody-" + uuid.uuid4().hex[:6],
                                                            "password": "wrong"})
             self.assertEqual(r.status_code, 401)
+            turnstile.assert_not_called()
+            picture.assert_not_called()
 
 
 class AccountsApiTest(unittest.TestCase):
 
     def setUp(self):
-        turnstile = patch.object(routers["admin_auth"], "verify_turnstile", lambda *a, **k: None)
-        turnstile.start()
-        self.addCleanup(turnstile.stop)
+        challenge = patch.object(routers["admin_auth"], "verify_challenge", lambda *a, **k: None)
+        challenge.start()
+        self.addCleanup(challenge.stop)
         self.db = SessionLocal()
         self.addCleanup(self.db.close)
         app = FastAPI()

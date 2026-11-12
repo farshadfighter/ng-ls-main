@@ -2,7 +2,7 @@ import ipaddress
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings
-from typing import Optional
+from typing import Literal, Optional
 
 class Settings(BaseSettings):
     # Database
@@ -59,13 +59,19 @@ class Settings(BaseSettings):
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: Optional[str] = None
 
-    # Cloudflare Turnstile (admin login). TURNSTILE_ENABLED=true (the default, and the only setting
-    # for an internet-reachable server) requires the challenge; TURNSTILE_SECRET_KEY then has no
-    # default: when unset, every login is rejected rather than silently skipping the bot check.
-    # TURNSTILE_ENABLED=false only where this host cannot reach Cloudflare (air-gapped, lab):
-    # the account password, lockout and sessions are then the only gate on the console.
-    TURNSTILE_ENABLED: bool = True
+    # The bot check on the admin console's login (app/routers/admin_auth.py):
+    #   builtin   (the default) a picture of 5 characters drawn by this server (app/captcha.py);
+    #             no outside service, so it works where Cloudflare cannot be reached. Needs Redis:
+    #             without it every login is refused (503) rather than let through unchecked.
+    #   turnstile Cloudflare Turnstile; TURNSTILE_SECRET_KEY then has no default: when unset, every
+    #             login is refused rather than silently skipping the check.
+    #   off       no check: only where nobody but the administrators reaches the console (lab);
+    #             the account password, lockout and sessions are then the only gate.
+    CAPTCHA_MODE: Literal["builtin", "turnstile", "off"] = "builtin"
     TURNSTILE_SECRET_KEY: Optional[str] = None
+    # No longer read (CAPTCHA_MODE replaced it); kept only so start-up can warn a server whose .env
+    # still sets it (app/main.py).
+    TURNSTILE_ENABLED: Optional[bool] = None
 
     # CORS — comma-separated origins (scheme + host[:port], no trailing slash,
     # no wildcard) allowed to make credentialed cross-origin requests to this

@@ -14,5 +14,7 @@ cryptography==50.0.2
 redis==8.1.0
 alembic==1.20.0
 requests==2.34.2
+# The admin login's own picture check (app/captcha.py).
+pillow==13.0.0
 # Reads .env when the server runs outside docker (pydantic-settings env_file).
 python-dotenv==1.2.4

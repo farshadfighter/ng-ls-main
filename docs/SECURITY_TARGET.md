@@ -17,7 +17,7 @@
 (`license-admin-ui`) لایسنس می‌سازند، طرح را تغییر می‌دهند، فایل لایسنس آفلاین صادر می‌کنند و دنبالهٔ ممیزی را می‌بینند.
 
 **مرز TOE:** `license_server/` (FastAPI)، `license-admin-ui/` (React + nginx)، پیکربندی `docker-compose*.yml` و `traefik/`.
-**محیط:** میزبان Docker، PostgreSQL، Redis، Cloudflare Turnstile، پورتال فروش (کلاینت `/internal/portal`)، NTP.
+**محیط:** میزبان Docker، PostgreSQL، Redis، Cloudflare Turnstile (فقط با `CAPTCHA_MODE=turnstile`)، پورتال فروش (کلاینت `/internal/portal`)، NTP.
 
 ## ۲. تهدیدها
 

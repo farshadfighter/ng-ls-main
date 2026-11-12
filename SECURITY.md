@@ -29,7 +29,7 @@ did and what happened.
 | Passwords: ≥ 12 characters, 3 character classes, not the user name, salted scrypt. New and reset passwords must be changed at the next sign-in. | `app/core/passwords.py` |
 | 5 failed sign-ins → locked 15 minutes; refusals all look the same and take the same time. | `app/accounts.py` |
 | Server-side sessions: ended by sign-out, after 15 minutes idle, 8 hours after sign-in; password change and account disable end them. JWT (HS256, ≥ 256-bit key) with issuer and audience. | `app/core/security.py` |
-| Cloudflare Turnstile on sign-in (bots). | `app/routers/admin_auth.py` |
+| A bot check on sign-in (`CAPTCHA_MODE`): by default a picture this server draws, one attempt and 2 minutes each, kept hashed in Redis, fail-closed; or Cloudflare Turnstile. | `app/captcha.py`, `app/routers/admin_auth.py` |
 | Login banner before sign-in. | `ADMIN_LOGIN_BANNER` |
 | Recovery on the server (`python -m app.cli`), audited. | `app/cli.py` |
 

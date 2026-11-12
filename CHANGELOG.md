@@ -5,6 +5,26 @@ annotated git tag `vX.Y.Z` equal to `VERSION` in `license_server/app/main.py`.
 
 ## Unreleased
 
+### Admin login: the server's own picture check (CAPTCHA_MODE)
+- `CAPTCHA_MODE` chooses the login's bot check: `builtin` (the new default),
+  `turnstile` or `off`. `builtin` is a picture of 5 characters the server
+  draws itself (`app/captcha.py`, Pillow), so the login keeps a bot check
+  where Cloudflare cannot be reached. Look-alike characters are left out and
+  case is ignored; each picture is good for one attempt (right or wrong) and
+  2 minutes, kept in Redis as a SHA-256 of the answer; without Redis the
+  login is refused (503), never let through unchecked. The check runs before
+  the credentials, as before.
+- `POST /api/admin/captcha` (public, rate-limited, `no-store`) gives a picture;
+  the login form shows it with a "↻" for another one and fetches a new one
+  after every failed attempt and before it expires.
+- `GET /api/admin/login-options` answers `captcha` (and still
+  `turnstile_enabled`). The Turnstile script is loaded only when the mode is
+  `turnstile`, so the login page no longer reaches Cloudflare otherwise; the
+  CSP allows `data:` images for the picture.
+- `TURNSTILE_ENABLED` is no longer read; the backend logs a warning while it
+  is still set. A server that relied on Turnstile sets `CAPTCHA_MODE=turnstile`.
+- New dependency: `pillow` 13.0.0.
+
 ### Admin login: Turnstile can be switched off (from SinaBimesl/ng-ls `abd381a`)
 - `TURNSTILE_ENABLED` (default `true`). `false` only for a server that cannot
   reach Cloudflare (air-gapped, lab): the login challenge is skipped and the
